@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0c6f67" />
+    <title>MediTrace - Voice intake</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet" />
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script type="module" crossorigin src="/assets/index-p_Z7acbj.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-D-tnVfId.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="side-panel">
+        <a class="brand" href="#" aria-label="MediTrace home">
+          <span class="brand-mark"><i data-lucide="activity"></i></span>
+          <span>Medi<span>Trace</span></span>
+        </a>
+
+        <div class="patient-card">
+          <div class="avatar">RP</div>
+          <div><strong>Ramesh Patel</strong><span>New consultation</span></div>
+          <button class="more" aria-label="Patient options"><i data-lucide="ellipsis"></i></button>
+        </div>
+
+        <nav class="steps" aria-label="Intake progress">
+          <p class="eyebrow">Today’s intake</p>
+          <a class="step complete" href="#"><span><i data-lucide="check"></i></span><div><b>Welcome</b><small>Completed</small></div></a>
+          <a class="step current" href="#"><span>2</span><div><b>Current concern</b><small>In progress</small></div></a>
+          <a class="step" href="#"><span>3</span><div><b>Health history</b><small>Up next</small></div></a>
+          <a class="step" href="#"><span>4</span><div><b>Review</b><small>Up next</small></div></a>
+        </nav>
+
+        <div class="privacy-note"><i data-lucide="shield-check"></i><p><b>Private by design</b><br/>Your responses are encrypted and only shared with your care team.</p></div>
+        <button class="end-button"><i data-lucide="log-out"></i> End & save later</button>
+      </aside>
+
+      <section class="workspace">
+        <header>
+          <div class="crumb"><span class="live-dot"></span> Voice-assisted intake <span class="slash">/</span> Step 2 of 4</div>
+          <div class="header-actions">
+            <button class="language-button" id="languageButton"><i data-lucide="languages"></i><span id="languageName">English</span><i data-lucide="chevron-down"></i></button>
+            <div class="language-menu" id="languageMenu">
+              <button data-lang="en-IN" data-name="English">English</button>
+              <button data-lang="hi-IN" data-name="हिन्दी">हिन्दी</button>
+              <button data-lang="ta-IN" data-name="தமிழ்">தமிழ்</button>
+            </div>
+            <button class="help-button" aria-label="Help"><i data-lucide="circle-help"></i></button>
+          </div>
+        </header>
+
+        <section class="conversation" aria-live="polite">
+          <div class="intro-row">
+            <div><p class="eyebrow">Let’s begin</p><h1>Tell me what brings<br/>you in today.</h1></div>
+            <div class="time-pill"><i data-lucide="clock-3"></i><span>About 3 minutes</span></div>
+          </div>
+
+          <div class="thread" id="thread">
+            <article class="message assistant-message">
+              <div class="assistant-avatar"><i data-lucide="sparkles"></i></div>
+              <div class="message-body"><div class="message-meta">MediTrace <span>•</span> just now</div><p id="firstPrompt">Hello Ramesh. I’ll help your care team understand how you’re feeling. What is bothering you today?</p><button class="listen-button speak-trigger" data-text="Hello Ramesh. I’ll help your care team understand how you’re feeling. What is bothering you today?"><i data-lucide="volume-2"></i> Listen again</button></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="voice-dock" id="voiceDock">
+          <div class="wave-area" id="waveArea" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+          <p class="listening-label" id="voiceStatus">Tap the microphone and speak naturally</p>
+          <button class="mic-button" id="micButton" aria-label="Start voice input"><i data-lucide="mic"></i></button>
+          <div class="or-line"><span></span> or type your response <span></span></div>
+          <form class="text-entry" id="textForm"><input id="textInput" type="text" autocomplete="off" placeholder="Type your response here..." /><button aria-label="Send response" type="submit"><i data-lucide="arrow-up"></i></button></form>
+          <p class="mic-permission"><i data-lucide="mic"></i> Your microphone is only used while you are speaking.</p>
+        </section>
+      </section>
+
+      <aside class="summary-panel">
+        <div class="summary-head"><div><p class="eyebrow">Your responses</p><h2>Intake summary</h2></div><span class="count" id="responseCount">0 of 4</span></div>
+        <div class="summary-progress"><span id="progressBar"></span></div>
+        <div class="empty-summary" id="emptySummary"><div class="empty-icon"><i data-lucide="clipboard-list"></i></div><h3>We’re listening</h3><p>Your answers will appear here as you go, so you can review them before sharing.</p></div>
+        <div class="summary-items" id="summaryItems"></div>
+        <div class="summary-tip"><i data-lucide="lightbulb"></i><p><b>Take your time.</b><br/>You can pause or correct anything before your visit.</p></div>
+      </aside>
+    </main>
+    <div class="toast" id="toast" role="status"></div>
+  </body>
+</html>
