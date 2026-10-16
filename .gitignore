@@ -3,3 +3,4 @@ dist/
 .env
 data/intakes.json
 data/users.json
+data/reviews.json

@@ -30,22 +30,29 @@ It does not include medical diagnosis, clinical NLP, document OCR, or a producti
 - A local Express API with persistent JSON session storage under `data/intakes.json` (ignored from git).
 - “Listen again” buttons to replay assistant prompts.
 - Responsive styling for smaller screens.
+- A role-aware entry point: signing in as a patient opens the intake; signing in as a clinician opens the doctor workspace.
+- A clinician workspace (dashboard + per-patient review) built on top of the existing backend, described below.
 
 ## Project structure
 
 ```text
 MLCV-CP/
-├── index.html          # Page structure and UI content
+├── index.html          # Page structure, login screen, patient portal, doctor root
 ├── package.json        # Vite scripts and dependency definition
-├── server/index.mjs    # API, local auth, ElevenLabs proxy, and persistent local stores
-├── .env.example        # ElevenLabs API-key template
+├── server/
+│   ├── index.mjs       # API, local auth, ElevenLabs proxy, doctor API, local stores
+│   └── mock-data.mjs   # Clearly-labelled fictional demo patients (mock adapter)
+├── .env.example        # ElevenLabs and Google OAuth config template
 ├── data/
 │   ├── intakes.json    # Persistent intake sessions (ignored from git)
-│   └── users.json      # Local prototype accounts (ignored from git, seeded on first run)
+│   ├── users.json      # Local prototype accounts (ignored from git, seeded on first run)
+│   └── reviews.json    # Clinician review/approval state (ignored from git)
 ├── src/
 │   ├── auth.js         # Login screen, token storage, session restore, sign out
 │   ├── main.js         # Voice, conversation, and summary behaviour
-│   └── style.css       # Full visual design and responsive layout
+│   ├── doctor.js       # Clinician workspace (dashboard + patient review)
+│   ├── doctor.css      # Clinician workspace styling
+│   └── style.css       # Patient portal visual design and responsive layout
 └── HANDOVER.md         # This handover note
 ```
 
@@ -78,9 +85,11 @@ The production files are created in `dist/`.
 ## How sign-in works
 
 - The app opens on the login screen until a valid session is present.
-- Accounts live in `data/users.json`, which is seeded on first run with a demo patient:
-  - Email: `ramesh.patel@example.com`
-  - Password: `meditrace123`
+- Accounts live in `data/users.json`, which is seeded on first run with a demo patient and two demo clinicians. The seeder also adds any missing seed account to an existing `users.json`:
+  - Patient — Email: `ramesh.patel@example.com`, Password: `meditrace123`
+  - Clinician — Email: `doctor@meditrace.health`, Password: `meditrace123` (Dr. Ananya Rao, Internal Medicine)
+  - Clinician — Email: `vikram.nair@meditrace.health`, Password: `meditrace123` (Dr. Vikram Nair, Cardiology)
+- After signing in, the app routes by role: `Patient` opens the intake, `Doctor` opens the clinician workspace.
 - Passwords are hashed with `scrypt`; the plain password is never stored.
 - `POST /api/auth/login` returns a bearer token held in `localStorage` (or `sessionStorage` when "remember me" is off). The intake, narration, and transcription routes require that token.
 - On refresh, `GET /api/auth/session` validates the stored token and restores the signed-in user; "Sign out" clears the token and returns to the login screen.
@@ -110,6 +119,33 @@ The production files are created in `dist/`.
 5. MediTrace shows and speaks the next question.
 6. After four responses, the workflow displays a completion message and disables additional microphone capture.
 
+## Clinician workspace
+
+Signing in with a clinician account opens a separate, doctor-facing interface. The patient portal is untouched.
+
+### What it shows
+
+- **Overview dashboard** — total patients, awaiting review, reviewed, and flagged counts; the next patient to open; today's queue; and a "needs attention" list.
+- **Patient queue** — a searchable, filterable list (status, priority, date) of both recorded intakes and clearly-labelled demo patients.
+- **Patient workspace** — patient overview (demographics, chief complaint, allergies, medications, conditions), an AI-drafted clinical summary with editable sections, a medical timeline, uploaded documents, attention flags, and AI-suggested clarification questions. Missing information is always shown as "Not provided" rather than invented.
+- **Source evidence** — the AI draft, flags, and questions link back to the exact patient response or uploaded document they came from.
+- **Review & decision** — the clinician edits sections, marks them reviewed, saves a draft, requests clarification, or approves the summary (with a confirmation step). Approval records the clinician as the final decision-maker. An "Export to HIS" control is present but intentionally disabled, because no hospital integration exists.
+
+### Data honesty
+
+- Two data sources are kept separate and labelled everywhere:
+  - **Recorded intakes** (`source: "intake"`, `demo: false`) — real sessions from `data/intakes.json`.
+  - **Demo patients** (`source: "mock"`, `demo: true`) — fictional records in `server/mock-data.mjs`. They never describe a real person and are marked with a "Demo" badge and a banner.
+- No diagnosis, prescription, dose change, or auto-approval is generated. Flags describe what a patient reported or what a document contains, and are explicitly labelled "Patient-reported", "AI inference", or "From document".
+
+### Doctor API
+
+- `GET /api/doctor/overview` — queue summary and counts.
+- `GET /api/doctor/patients/:id` — full patient record with any saved review.
+- `PUT /api/doctor/patients/:id/summary` — save section edits and reviewed state.
+- `POST /api/doctor/patients/:id/decision` — record `draft`, `approve`, or `clarification`.
+- All doctor routes require a valid token whose user has `role: "Doctor"` (enforced by `requireDoctor`); patient tokens receive `403`.
+
 ## Important browser notes
 
 - The browser must be allowed to access the microphone before voice capture can work.
@@ -126,6 +162,8 @@ The production files are created in `dist/`.
 - The four login-screen languages and their translated copy were checked against the built output.
 - Google OAuth was checked unconfigured: `/api/auth/providers` reports `google: false`, `/api/health` reports `googleConfigured: false`, and `/api/auth/google` returns `503` instead of faking a login. The full consent/callback flow still requires real Google credentials to test.
 - The new API routes are ready for an ElevenLabs key; live transcription/narration should be tested after adding one.
+- The doctor API was smoke-tested against a temporary server instance: clinician login succeeds with specialty, `GET /api/doctor/overview` returns correct counts, `GET /api/doctor/patients/:id` returns a full record, `PUT .../summary` saves edits, `POST .../decision` records approval and updates the counts, and a patient token receives `403` on the doctor routes.
+- The doctor workspace was verified through a successful `npm run build`. End-to-end clicking through the workspace has not yet been exercised in a browser from this environment.
 
 ## Suggested next work
 
@@ -133,6 +171,7 @@ The production files are created in `dist/`.
 2. Add a final review-and-submit screen, subject to consent and privacy requirements.
 3. Add consent, accessibility, error recovery, and session handling before any real clinical use.
 4. Harden the prototype login for production: server-side persisted sessions, password reset, account provisioning, and audit logging. The Google OAuth flow is a starting point but needs real client credentials, HTTPS, and organisation-level consent review.
+5. Clinician workspace follow-ups: server-persisted review state with an audit trail, real assignment of patients to clinicians, and a genuine HIS/FHIR export once a target system and its security requirements exist. Remove the demo dataset before any clinical pilot.
 
 ## Safety and scope note
 

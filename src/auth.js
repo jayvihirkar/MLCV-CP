@@ -1,5 +1,6 @@
 import './style.css';
 import { startIntake } from './main.js';
+import { startDoctorApp } from './doctor.js';
 
 const TOKEN_KEY = 'meditrace.token';
 const LOCALE_KEY = 'meditrace.locale';
@@ -106,7 +107,7 @@ function applyLoginTranslations() {
   emailInput.placeholder = strings.emailPlaceholder;
   passwordInput.placeholder = strings.passwordPlaceholder;
   languageName.textContent = localeNames[loginLocale];
-  copyButtons.forEach((button) => button.setAttribute('aria-label', button.dataset.copy === 'demoEmail' ? strings.copyEmail : strings.copyPassword));
+  copyButtons.forEach((button) => button.setAttribute('aria-label', /Email/.test(button.dataset.copy) ? strings.copyEmail : strings.copyPassword));
   renderFill(fillDemoButton.classList.contains('done') ? 'done' : 'idle');
   if (!submitButton.disabled) renderSubmit(false);
 }
@@ -114,6 +115,10 @@ function applyLoginTranslations() {
 function enterApp(user) {
   document.body.classList.add('authenticated');
   if (window.lucide) window.lucide.createIcons();
+  if (user && user.role === 'Doctor') {
+    startDoctorApp(user, { token: storedToken(), onSignOut: signOut });
+    return;
+  }
   startIntake(user);
 }
 
@@ -216,17 +221,28 @@ signOutButton.addEventListener('click', signOut);
 
 googleButton.addEventListener('click', () => { if (googleEnabled) window.location.href = '/api/auth/google'; });
 
-fillDemoButton.addEventListener('click', () => {
+function fillFromButton(button, emailId, passwordId) {
   clearError();
   clearInvalid(emailField);
   clearInvalid(passwordField);
-  emailInput.value = $('#demoEmail').textContent.trim();
-  passwordInput.value = $('#demoPassword').textContent.trim();
-  renderFill('done');
-  clearTimeout(fillDemoButton._timer);
-  fillDemoButton._timer = setTimeout(() => renderFill('idle'), 2000);
+  emailInput.value = $(emailId).textContent.trim();
+  passwordInput.value = $(passwordId).textContent.trim();
+  const original = button.innerHTML;
+  button.classList.add('done');
+  button.innerHTML = `<i data-lucide="check"></i><span>${loginStrings[loginLocale].filled}</span>`;
+  if (window.lucide) window.lucide.createIcons();
+  clearTimeout(button._timer);
+  button._timer = setTimeout(() => {
+    button.classList.remove('done');
+    button.innerHTML = original;
+    if (window.lucide) window.lucide.createIcons();
+  }, 2000);
   emailInput.focus();
-});
+}
+
+fillDemoButton.addEventListener('click', () => fillFromButton(fillDemoButton, '#demoEmail', '#demoPassword'));
+const fillDemoDoctorButton = $('#fillDemoDoctor');
+if (fillDemoDoctorButton) fillDemoDoctorButton.addEventListener('click', () => fillFromButton(fillDemoDoctorButton, '#demoDoctorEmail', '#demoDoctorPassword'));
 
 copyButtons.forEach((button) => button.addEventListener('click', async () => {
   const source = document.getElementById(button.dataset.copy);

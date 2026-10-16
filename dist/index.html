@@ -9,8 +9,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet" />
     <script src="https://unpkg.com/lucide@latest"></script>
-    <script type="module" crossorigin src="/assets/index-BoyzQ7zw.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Nwg6Dz5K.css">
+    <script type="module" crossorigin src="/assets/index-BlXHEsyM.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Bfre8o2r.css">
   </head>
   <body>
     <section class="login-screen" id="loginScreen">
@@ -110,6 +110,23 @@
               </div>
             </div>
             <button type="button" class="demo-fill" id="fillDemo"><i data-lucide="wand-2"></i><span data-login-i18n="fillDemo">Fill demo credentials</span></button>
+
+            <div class="demo-divider"><span></span><em>Clinician demo</em><span></span></div>
+            <div class="demo-cred">
+              <span class="demo-cred-label">Email address</span>
+              <div class="demo-cred-value">
+                <code id="demoDoctorEmail">doctor@meditrace.health</code>
+                <button type="button" class="demo-copy" data-copy="demoDoctorEmail" aria-label="Copy clinician email"><i data-lucide="copy"></i></button>
+              </div>
+            </div>
+            <div class="demo-cred">
+              <span class="demo-cred-label">Password</span>
+              <div class="demo-cred-value">
+                <code id="demoDoctorPassword">meditrace123</code>
+                <button type="button" class="demo-copy" data-copy="demoDoctorPassword" aria-label="Copy clinician password"><i data-lucide="copy"></i></button>
+              </div>
+            </div>
+            <button type="button" class="demo-fill" id="fillDemoDoctor"><i data-lucide="stethoscope"></i><span>Fill clinician credentials</span></button>
           </div>
         </form>
       </div>
@@ -188,6 +205,9 @@
         <div class="summary-tip"><i data-lucide="lightbulb"></i><p><b>Take your time.</b><br/>You can pause or correct anything before your visit.</p></div>
       </aside>
     </main>
+
+    <div class="doctor-root" id="doctorRoot" hidden></div>
+
     <div class="toast" id="toast" role="status"></div>
   </body>
 </html>
