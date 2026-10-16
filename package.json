@@ -3,11 +3,17 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently \"vite\" \"node server/index.mjs\"",
     "build": "vite build",
-    "preview": "vite --host 0.0.0.0"
+    "preview": "vite preview",
+    "start": "node server/index.mjs"
   },
   "devDependencies": {
-    "vite": "latest"
+    "vite": "latest",
+    "concurrently": "latest"
+  },
+  "dependencies": {
+    "express": "latest",
+    "multer": "latest"
   }
 }

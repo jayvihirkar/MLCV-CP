@@ -11,6 +11,108 @@
     <script src="https://unpkg.com/lucide@latest"></script>
   </head>
   <body>
+    <section class="login-screen" id="loginScreen">
+      <div class="login-visual">
+        <a class="brand login-brand" href="#" aria-label="MediTrace home">
+          <span class="brand-mark"><i data-lucide="activity"></i></span>
+          <span>Medi<span>Trace</span></span>
+        </a>
+        <div class="visual-copy">
+          <p class="eyebrow" data-login-i18n="vEyebrow">Patient pre-visit intake</p>
+          <h1 data-login-i18n="vTitle">Your voice,<br/>your health story.</h1>
+          <p class="visual-lede" data-login-i18n="vLede">Sign in to begin a voice-guided pre-visit intake. Answer naturally by speaking or typing, and review every response before you finish.</p>
+          <ul class="visual-points">
+            <li><i data-lucide="mic"></i><span data-login-i18n="vPoint1">Voice-guided questions in English, Hindi, Marathi and Tamil</span></li>
+            <li><i data-lucide="clipboard-check"></i><span data-login-i18n="vPoint2">Review and edit every answer before you finish</span></li>
+            <li><i data-lucide="shield-check"></i><span data-login-i18n="vPoint3">Your microphone is only used while you are speaking</span></li>
+          </ul>
+        </div>
+        <p class="visual-foot"><i data-lucide="lock"></i> <span data-login-i18n="vFoot">Responses are saved to your local intake session</span></p>
+      </div>
+
+      <div class="login-form-panel">
+        <div class="login-lang">
+          <button class="language-button" id="loginLanguageButton" type="button" aria-haspopup="true" aria-expanded="false">
+            <i data-lucide="languages"></i><span id="loginLanguageName">English</span><i data-lucide="chevron-down"></i>
+          </button>
+          <div class="language-menu" id="loginLanguageMenu">
+            <button type="button" data-lang="en" data-name="English">English</button>
+            <button type="button" data-lang="hi" data-name="हिन्दी">हिन्दी</button>
+            <button type="button" data-lang="mr" data-name="मराठी">मराठी</button>
+            <button type="button" data-lang="ta" data-name="தமிழ்">தமிழ்</button>
+          </div>
+        </div>
+
+        <form class="login-card" id="loginForm" novalidate>
+          <p class="eyebrow" data-login-i18n="fEyebrow">Sign in</p>
+          <h2 data-login-i18n="fTitle">Welcome back</h2>
+          <p class="login-sub" data-login-i18n="fSub">Enter your details to continue to your intake.</p>
+
+          <button type="button" class="oauth-button" id="googleButton">
+            <span class="oauth-logo" aria-hidden="true">
+              <svg viewBox="0 0 48 48" width="18" height="18" focusable="false">
+                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+              </svg>
+            </span>
+            <span data-login-i18n="continueGoogle">Continue with Google</span>
+          </button>
+          <p class="oauth-note" id="googleNote" role="status" hidden data-login-i18n="googleUnavailable">Google sign-in isn't configured on this deployment.</p>
+
+          <div class="login-divider"><span></span><em data-login-i18n="orDivider">OR</em><span></span></div>
+
+          <div class="field-block">
+            <label class="login-label" for="loginEmail" data-login-i18n="emailLabel">Email address</label>
+            <div class="login-field" id="emailField">
+              <i data-lucide="mail"></i>
+              <input id="loginEmail" name="email" type="email" autocomplete="username" placeholder="you@example.com" required />
+            </div>
+          </div>
+
+          <div class="field-block">
+            <label class="login-label" for="loginPassword" data-login-i18n="passwordLabel">Password</label>
+            <div class="login-field" id="passwordField">
+              <i data-lucide="key-round"></i>
+              <input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required />
+              <button class="password-toggle" id="togglePassword" type="button" aria-label="Show password"><i data-lucide="eye"></i></button>
+            </div>
+          </div>
+
+          <div class="login-row">
+            <label class="remember-me"><input type="checkbox" id="rememberMe" checked /> <span data-login-i18n="remember">Remember me</span></label>
+            <a class="forgot-link" href="#" data-login-i18n="forgot">Forgot password?</a>
+          </div>
+
+          <button class="login-submit" id="loginSubmit" type="submit"><span data-login-i18n="submit">Sign in</span><i data-lucide="arrow-right"></i></button>
+          <p class="login-error" id="loginError" role="alert" hidden></p>
+
+          <div class="demo-card">
+            <div class="demo-head">
+              <span class="demo-icon"><i data-lucide="info"></i></span>
+              <div><b data-login-i18n="demoTitle">Demo access</b><small data-login-i18n="demoHint">Use these details to explore the prototype.</small></div>
+            </div>
+            <div class="demo-cred">
+              <span class="demo-cred-label" data-login-i18n="emailLabel">Email address</span>
+              <div class="demo-cred-value">
+                <code id="demoEmail">ramesh.patel@example.com</code>
+                <button type="button" class="demo-copy" data-copy="demoEmail" aria-label="Copy email"><i data-lucide="copy"></i></button>
+              </div>
+            </div>
+            <div class="demo-cred">
+              <span class="demo-cred-label" data-login-i18n="passwordLabel">Password</span>
+              <div class="demo-cred-value">
+                <code id="demoPassword">meditrace123</code>
+                <button type="button" class="demo-copy" data-copy="demoPassword" aria-label="Copy password"><i data-lucide="copy"></i></button>
+              </div>
+            </div>
+            <button type="button" class="demo-fill" id="fillDemo"><i data-lucide="wand-2"></i><span data-login-i18n="fillDemo">Fill demo credentials</span></button>
+          </div>
+        </form>
+      </div>
+    </section>
+
     <main class="app-shell">
       <aside class="side-panel">
         <a class="brand" href="#" aria-label="MediTrace home">
@@ -20,30 +122,32 @@
 
         <div class="patient-card">
           <div class="avatar">RP</div>
-          <div><strong>Ramesh Patel</strong><span>New consultation</span></div>
+          <div><strong>Ramesh Patel</strong><span data-i18n="newConsultation">New consultation</span></div>
           <button class="more" aria-label="Patient options"><i data-lucide="ellipsis"></i></button>
         </div>
 
         <nav class="steps" aria-label="Intake progress">
-          <p class="eyebrow">Today’s intake</p>
-          <a class="step complete" href="#"><span><i data-lucide="check"></i></span><div><b>Welcome</b><small>Completed</small></div></a>
-          <a class="step current" href="#"><span>2</span><div><b>Current concern</b><small>In progress</small></div></a>
-          <a class="step" href="#"><span>3</span><div><b>Health history</b><small>Up next</small></div></a>
-          <a class="step" href="#"><span>4</span><div><b>Review</b><small>Up next</small></div></a>
+          <p class="eyebrow" data-i18n="todaysIntake">Today’s intake</p>
+          <a class="step complete" href="#"><span><i data-lucide="check"></i></span><div><b data-i18n="welcome">Welcome</b><small data-i18n="completed">Completed</small></div></a>
+          <a class="step current" href="#"><span>2</span><div><b data-i18n="currentConcern">Current concern</b><small data-i18n="inProgress">In progress</small></div></a>
+          <a class="step" href="#"><span>3</span><div><b data-i18n="healthHistory">Health history</b><small data-i18n="upNext">Up next</small></div></a>
+          <a class="step" href="#"><span>4</span><div><b data-i18n="review">Review</b><small data-i18n="upNext">Up next</small></div></a>
         </nav>
 
-        <div class="privacy-note"><i data-lucide="shield-check"></i><p><b>Private by design</b><br/>Your responses are encrypted and only shared with your care team.</p></div>
-        <button class="end-button"><i data-lucide="log-out"></i> End & save later</button>
+        <div class="privacy-note"><i data-lucide="shield-check"></i><p><b data-i18n="privateByDesign">Private by design</b><br/><span data-i18n="privacyText">Your answers are saved to your local intake session and shown in your summary for review.</span></p></div>
+        <button class="end-button"><i data-lucide="save"></i> <span data-i18n="saveLater">End & save later</span></button>
+        <button class="signout-button" id="signOutButton"><i data-lucide="power"></i> <span>Sign out</span></button>
       </aside>
 
       <section class="workspace">
         <header>
-          <div class="crumb"><span class="live-dot"></span> Voice-assisted intake <span class="slash">/</span> Step 2 of 4</div>
+          <div class="crumb"><span class="live-dot"></span> <span data-i18n="voiceIntake">Voice-assisted intake</span> <span class="slash">/</span> <span data-i18n="stepOfFour">Step 2 of 4</span></div>
           <div class="header-actions">
             <button class="language-button" id="languageButton"><i data-lucide="languages"></i><span id="languageName">English</span><i data-lucide="chevron-down"></i></button>
             <div class="language-menu" id="languageMenu">
               <button data-lang="en-IN" data-name="English">English</button>
               <button data-lang="hi-IN" data-name="हिन्दी">हिन्दी</button>
+              <button data-lang="mr-IN" data-name="मराठी">मराठी</button>
               <button data-lang="ta-IN" data-name="தமிழ்">தமிழ்</button>
             </div>
             <button class="help-button" aria-label="Help"><i data-lucide="circle-help"></i></button>
@@ -52,8 +156,8 @@
 
         <section class="conversation" aria-live="polite">
           <div class="intro-row">
-            <div><p class="eyebrow">Let’s begin</p><h1>Tell me what brings<br/>you in today.</h1></div>
-            <div class="time-pill"><i data-lucide="clock-3"></i><span>About 3 minutes</span></div>
+            <div><p class="eyebrow" data-i18n="letsBegin">Let’s begin</p><h1 data-i18n="pageTitle">Tell me what brings<br/>you in today.</h1></div>
+            <div class="time-pill"><i data-lucide="clock-3"></i><span data-i18n="aboutThreeMinutes">About 3 minutes</span></div>
           </div>
 
           <div class="thread" id="thread">
@@ -68,21 +172,21 @@
           <div class="wave-area" id="waveArea" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
           <p class="listening-label" id="voiceStatus">Tap the microphone and speak naturally</p>
           <button class="mic-button" id="micButton" aria-label="Start voice input"><i data-lucide="mic"></i></button>
-          <div class="or-line"><span></span> or type your response <span></span></div>
+          <div class="or-line"><span></span> <span data-i18n="orType">or type your response</span> <span></span></div>
           <form class="text-entry" id="textForm"><input id="textInput" type="text" autocomplete="off" placeholder="Type your response here..." /><button aria-label="Send response" type="submit"><i data-lucide="arrow-up"></i></button></form>
-          <p class="mic-permission"><i data-lucide="mic"></i> Your microphone is only used while you are speaking.</p>
+          <p class="mic-permission"><i data-lucide="mic"></i> <span data-i18n="micPrivacy">Your microphone is only used while you are speaking.</span></p>
         </section>
       </section>
 
       <aside class="summary-panel">
-        <div class="summary-head"><div><p class="eyebrow">Your responses</p><h2>Intake summary</h2></div><span class="count" id="responseCount">0 of 4</span></div>
+        <div class="summary-head"><div><p class="eyebrow" data-i18n="yourResponses">Your responses</p><h2 data-i18n="intakeSummary">Intake summary</h2></div><span class="count" id="responseCount">0 of 4</span></div>
         <div class="summary-progress"><span id="progressBar"></span></div>
-        <div class="empty-summary" id="emptySummary"><div class="empty-icon"><i data-lucide="clipboard-list"></i></div><h3>We’re listening</h3><p>Your answers will appear here as you go, so you can review them before sharing.</p></div>
+        <div class="empty-summary" id="emptySummary"><div class="empty-icon"><i data-lucide="clipboard-list"></i></div><h3 data-i18n="wereListening">We’re listening</h3><p data-i18n="emptySummary">Your answers will appear here as you go, so you can review them before sharing.</p></div>
         <div class="summary-items" id="summaryItems"></div>
         <div class="summary-tip"><i data-lucide="lightbulb"></i><p><b>Take your time.</b><br/>You can pause or correct anything before your visit.</p></div>
       </aside>
     </main>
     <div class="toast" id="toast" role="status"></div>
-    <script type="module" src="/src/main.js"></script>
+    <script type="module" src="/src/auth.js"></script>
   </body>
 </html>

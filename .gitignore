@@ -1,1 +1,5 @@
 node_modules/
+dist/
+.env
+data/intakes.json
+data/users.json

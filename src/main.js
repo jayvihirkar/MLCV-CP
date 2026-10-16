@@ -1,161 +1,56 @@
 import './style.css';
 
-const prompts = [
-  { label: 'Main concern', text: 'Hello Ramesh. I’ll help your care team understand how you’re feeling. What is bothering you today?' },
-  { label: 'When it started', text: 'Thank you. When did you first notice these symptoms?' },
-  { label: 'Severity', text: 'On a scale of one to ten, how uncomfortable does it feel right now?' },
-  { label: 'Anything else', text: 'Is there anything else you would like your care team to know?' },
+const VOICE_ID = '7qBNUtXRGP0jPi0H4r8k';
+const questions = [
+  { id: 'main-concern', label: { en: 'Main concern', hi: 'मुख्य समस्या', mr: 'मुख्य समस्या', ta: 'முக்கிய பிரச்சினை' }, text: { en: 'Hello Ramesh. I’ll help your care team understand how you’re feeling. What is bothering you today?', hi: 'नमस्ते रमेश। मैं आपकी देखभाल टीम को यह समझने में मदद करूँगी कि आप कैसा महसूस कर रहे हैं। आज आपको क्या परेशानी है?', mr: 'नमस्कार रमेश. तुम्हाला कसे वाटत आहे हे तुमच्या काळजी संघाला समजण्यास मी मदत करीन. आज तुम्हाला काय त्रास होत आहे?', ta: 'வணக்கம் ரமேஷ். நீங்கள் எப்படி உணர்கிறீர்கள் என்பதை உங்கள் சிகிச்சைக் குழு புரிந்துகொள்ள நான் உதவுவேன். இன்று உங்களைத் தொந்தரவு செய்வது என்ன?' } },
+  { id: 'when-started', label: { en: 'When it started', hi: 'कब शुरू हुआ', mr: 'कधी सुरू झाले', ta: 'எப்போது தொடங்கியது' }, text: { en: 'Thank you. When did you first notice these symptoms?', hi: 'धन्यवाद। आपने ये लक्षण पहली बार कब महसूस किए?', mr: 'धन्यवाद. तुम्हाला ही लक्षणे पहिल्यांदा कधी जाणवली?', ta: 'நன்றி. இந்த அறிகுறிகளை நீங்கள் முதலில் எப்போது கவனித்தீர்கள்?' } },
+  { id: 'severity', label: { en: 'Severity', hi: 'तीव्रता', mr: 'तीव्रता', ta: 'தீவிரம்' }, text: { en: 'On a scale of one to ten, how uncomfortable does it feel right now?', hi: 'एक से दस के पैमाने पर, आप अभी कितनी असुविधा महसूस कर रहे हैं?', mr: 'एक ते दहा या प्रमाणावर, आत्ता तुम्हाला किती अस्वस्थ वाटते?', ta: 'ஒன்று முதல் பத்து வரையிலான அளவில், இப்போது நீங்கள் எவ்வளவு அசௌகரியமாக உணர்கிறீர்கள்?' } },
+  { id: 'anything-else', label: { en: 'Anything else', hi: 'कुछ और', mr: 'आणखी काही', ta: 'வேறு ஏதாவது' }, text: { en: 'Is there anything else you would like your care team to know?', hi: 'क्या कोई और बात है जो आप अपनी देखभाल टीम को बताना चाहेंगे?', mr: 'तुमच्या काळजी संघाला जाणून घ्यायचे असे आणखी काही आहे का?', ta: 'உங்கள் சிகிச்சைக் குழு தெரிந்துகொள்ள வேண்டிய வேறு ஏதேனும் உள்ளதா?' } },
 ];
 
-let currentPrompt = 0;
-let responses = [];
-let selectedLanguage = 'en-IN';
-let recognition;
-let isListening = false;
+const ui = {
+  en: { newConsultation: 'New consultation', todaysIntake: 'Today’s intake', welcome: 'Welcome', completed: 'Completed', currentConcern: 'Current concern', inProgress: 'In progress', healthHistory: 'Health history', upNext: 'Up next', review: 'Review', privateByDesign: 'Private by design', privacyText: 'Your answers are saved to your local intake session and shown in your summary for review.', saveLater: 'End & save later', voiceIntake: 'Voice-assisted intake', stepOfFour: 'Step 2 of 4', letsBegin: 'Let’s begin', pageTitle: 'Tell me what brings<br/>you in today.', aboutThreeMinutes: 'About 3 minutes', orType: 'or type your response', micPrivacy: 'Your microphone is only used while you are speaking.', yourResponses: 'Your responses', intakeSummary: 'Intake summary', wereListening: 'We’re listening', emptySummary: 'Your answers will appear here as you go, so you can review them before sharing.', tapToSpeak: 'Tap the microphone and speak naturally', recording: 'Recording your response… tap again to stop', transcribing: 'Transcribing your response…', fallbackNarration: 'ElevenLabs is not configured yet. Add your API key to .env; the prompt text is still shown.', voiceError: 'We could not transcribe that audio. Please try again or type your response.' },
+  hi: { newConsultation: 'नई परामर्श', todaysIntake: 'आज का इंटेक', welcome: 'स्वागत', completed: 'पूरा हुआ', currentConcern: 'वर्तमान समस्या', inProgress: 'जारी है', healthHistory: 'स्वास्थ्य इतिहास', upNext: 'आगे', review: 'समीक्षा', privateByDesign: 'निजी और सुरक्षित', privacyText: 'आपके उत्तर आपके स्थानीय इंटेक सत्र में सहेजे जाते हैं और समीक्षा के लिए आपके सारांश में दिखते हैं।', saveLater: 'अभी रोकें और बाद में सहेजें', voiceIntake: 'वॉइस-सहायता इंटेक', stepOfFour: 'चरण 2 / 4', letsBegin: 'शुरू करते हैं', pageTitle: 'आज आपको क्या<br/>परेशानी है?', aboutThreeMinutes: 'लगभग 3 मिनट', orType: 'या अपना उत्तर लिखें', micPrivacy: 'आपका माइक्रोफ़ोन केवल आपके बोलते समय उपयोग किया जाता है।', yourResponses: 'आपके उत्तर', intakeSummary: 'इंटेक सारांश', wereListening: 'हम सुन रहे हैं', emptySummary: 'आपके उत्तर यहाँ दिखाई देंगे, ताकि साझा करने से पहले आप उनकी समीक्षा कर सकें।', tapToSpeak: 'माइक्रोफ़ोन दबाएँ और स्वाभाविक रूप से बोलें', recording: 'आपका उत्तर रिकॉर्ड हो रहा है… रोकने के लिए दोबारा दबाएँ', transcribing: 'आपके उत्तर को लिखा जा रहा है…', fallbackNarration: 'ElevenLabs अभी सेट नहीं है। .env में API key जोड़ें; प्रश्न स्क्रीन पर मौजूद है।', voiceError: 'हम इस ऑडियो को समझ नहीं पाए। कृपया फिर से कोशिश करें या उत्तर लिखें।' },
+  ta: { newConsultation: 'புதிய ஆலோசனை', todaysIntake: 'இன்றைய பதிவு', welcome: 'வரவேற்பு', completed: 'முடிந்தது', currentConcern: 'தற்போதைய பிரச்சினை', inProgress: 'நடைபெறுகிறது', healthHistory: 'உடல்நல வரலாறு', upNext: 'அடுத்து', review: 'மதிப்பாய்வு', privateByDesign: 'தனியுரிமை பாதுகாக்கப்பட்டது', privacyText: 'உங்கள் பதில்கள் உங்கள் உள்ளூர் பதிவில் சேமிக்கப்பட்டு, பரிசீலனைக்காக உங்கள் சுருக்கத்தில் காட்டப்படும்.', saveLater: 'முடித்து பின்னர் சேமிக்கவும்', voiceIntake: 'குரல் உதவி பதிவு', stepOfFour: 'படி 2 / 4', letsBegin: 'தொடங்கலாம்', pageTitle: 'இன்று உங்களை<br/>தொந்தரவு செய்வது என்ன?', aboutThreeMinutes: 'சுமார் 3 நிமிடங்கள்', orType: 'அல்லது உங்கள் பதிலை எழுதுங்கள்', micPrivacy: 'நீங்கள் பேசும் போது மட்டுமே உங்கள் மைக்ரோஃபோன் பயன்படுத்தப்படும்.', yourResponses: 'உங்கள் பதில்கள்', intakeSummary: 'பதிவு சுருக்கம்', wereListening: 'நாங்கள் கேட்கிறோம்', emptySummary: 'நீங்கள் பதிலளிக்கும்போது அவை இங்கே தோன்றும்; பகிர்வதற்கு முன் மதிப்பாய்வு செய்யலாம்.', tapToSpeak: 'மைக்ரோஃபோனை அழுத்தி இயல்பாகப் பேசுங்கள்', recording: 'உங்கள் பதில் பதிவாகிறது… நிறுத்த மீண்டும் அழுத்தவும்', transcribing: 'உங்கள் பதில் உரையாக மாற்றப்படுகிறது…', fallbackNarration: 'ElevenLabs இன்னும் அமைக்கப்படவில்லை. .env இல் API key சேர்க்கவும்; கேள்வி திரையில் உள்ளது.', voiceError: 'இந்த ஒலியை எங்களால் புரிந்துகொள்ள முடியவில்லை. மீண்டும் முயற்சிக்கவும் அல்லது பதிலை எழுதவும்.' },
+  mr: { newConsultation: 'नवीन सल्लामसलत', todaysIntake: 'आजचे इंटेक', welcome: 'स्वागत', completed: 'पूर्ण झाले', currentConcern: 'सध्याची समस्या', inProgress: 'सुरू आहे', healthHistory: 'आरोग्य इतिहास', upNext: 'पुढे', review: 'पुनरावलोकन', privateByDesign: 'गोपनीयतेने डिझाइन केलेले', privacyText: 'तुमची उत्तरे तुमच्या स्थानीय इंटेक सत्रात जतन केली जातात आणि पुनरावलोकनासाठी तुमच्या सारांशात दिसतात.', saveLater: 'थांबा आणि नंतर जतन करा', voiceIntake: 'व्हॉइस-सहाय्यित इंटेक', stepOfFour: 'चरण 2 / 4', letsBegin: 'सुरू करूया', pageTitle: 'आज तुम्हाला काय<br/>त्रास देते आहे?', aboutThreeMinutes: 'सुमारे 3 मिनिटे', orType: 'किंवा तुमचे उत्तर लिहा', micPrivacy: 'तुमचा माइक्रोफोन फक्त तुम्ही बोलत असतानाच वापरला जातो.', yourResponses: 'तुमची उत्तरे', intakeSummary: 'इंटेक सारांश', wereListening: 'आम्ही ऐकत आहोत', emptySummary: 'तुमची उत्तरे येथे दिसतील, जेणेकरून शेअर करण्यापूर्वी तुम्ही त्यांचे पुनरावलोकन करू शकता.', tapToSpeak: 'माइक्रोफोन दाबा आणि नैसर्गिकपणे बोला', recording: 'तुमचे उत्तर रेकॉर्ड होत आहे… थांबवण्यासाठी पुन्हा दाबा', transcribing: 'तुमचे उत्तर लिखित केले जात आहे…', fallbackNarration: 'ElevenLabs अद्याप सेट केलेले नाही. .env मध्ये API key जोडा; प्रश्न स्क्रीनवर आहे.', voiceError: 'आम्हाला हा ऑडिओ समजला नाही. कृपया पुन्हा प्रयत्न करा किंवा उत्तर लिहा.' },
+};
 
-const $ = (selector) => document.querySelector(selector);
-const thread = $('#thread');
-const micButton = $('#micButton');
-const voiceDock = $('#voiceDock');
-const voiceStatus = $('#voiceStatus');
-const textForm = $('#textForm');
-const textInput = $('#textInput');
-const toast = $('#toast');
+let locale = localStorage.getItem('meditrace.locale') || 'en'; let session; let currentQuestion = 0; let mediaRecorder; let audioChunks = []; let isRecording = false; let activeAudio; let currentUser = null; let started = false;
+const localeNames = { en: 'English', hi: 'हिन्दी', mr: 'मराठी', ta: 'தமிழ்' };
+const $ = (selector) => document.querySelector(selector); const thread = $('#thread'); const voiceDock = $('#voiceDock'); const micButton = $('#micButton'); const voiceStatus = $('#voiceStatus'); const textInput = $('#textInput'); const textForm = $('#textForm'); const toast = $('#toast'); const langToLocale = { en: 'en-IN', hi: 'hi-IN', mr: 'mr-IN', ta: 'ta-IN' };
+const icon = (name) => `<i data-lucide="${name}"></i>`; const strings = () => ui[locale];
 
-function makeIcon(name) { return `<i data-lucide="${name}"></i>`; }
+function authToken() { return sessionStorage.getItem('meditrace.token') || localStorage.getItem('meditrace.token') || ''; }
+async function api(url, options = {}) { const headers = new Headers(options.headers || {}); const token = authToken(); if (token) headers.set('Authorization', `Bearer ${token}`); const response = await fetch(url, { ...options, headers }); if (!response.ok) { const payload = await response.json().catch(() => ({})); throw new Error(payload.error || 'Request failed.'); } return response; }
+const nameTokens = ['Ramesh', 'रमेश', 'ரமேஷ்'];
+function firstName() { return ((currentUser && currentUser.name) || 'Ramesh Patel').trim().split(/\s+/)[0]; }
+function patientInitials() { const parts = ((currentUser && currentUser.name) || 'Ramesh Patel').trim().split(/\s+/); return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || 'MT'; }
+function withName(text) { return nameTokens.reduce((value, token) => value.split(token).join(firstName()), text); }
+function showToast(message) { toast.textContent = message; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 4200); }
+function renderSummary() { $('#responseCount').textContent = `${session.responses.length} of ${questions.length}`; $('#progressBar').style.width = `${session.responses.length / questions.length * 100}%`; $('#emptySummary').style.display = session.responses.length ? 'none' : 'flex'; $('#summaryItems').innerHTML = session.responses.map((response, index) => `<article class="summary-item"><span>${index + 1}</span><div><small>${response.label}</small><p></p></div><button class="edit-answer" data-index="${index}" aria-label="Edit ${response.label}">${icon('pencil')}</button></article>`).join(''); document.querySelectorAll('.summary-item p').forEach((element, index) => { element.textContent = session.responses[index].answer; }); lucide.createIcons(); }
+function applyTranslations() { document.querySelectorAll('[data-i18n]').forEach((element) => { element.innerHTML = strings()[element.dataset.i18n]; }); textInput.placeholder = locale === 'en' ? 'Type your response here...' : locale === 'hi' ? 'अपना उत्तर यहाँ लिखें...' : 'உங்கள் பதிலை இங்கே எழுதுங்கள்...'; if (!isRecording) voiceStatus.textContent = strings().tapToSpeak; }
+function addPatientMessage(answer) { const message = document.createElement('article'); message.className = 'message patient-message'; message.innerHTML = `<div class="message-body"><div class="message-meta">You <span>•</span> just now</div><p></p></div><div class="patient-avatar">${patientInitials()}</div>`; message.querySelector('p').textContent = answer; thread.append(message); message.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+function addAssistantMessage(question) { const text = withName(question.text[locale]); const message = document.createElement('article'); message.className = 'message assistant-message next-message'; message.innerHTML = `<div class="assistant-avatar">${icon('sparkles')}</div><div class="message-body"><div class="message-meta">MediTrace <span>•</span> just now</div><p></p><button class="listen-button speak-trigger">${icon('volume-2')} Listen again</button></div>`; message.querySelector('p').textContent = text; message.querySelector('.speak-trigger').dataset.text = text; thread.append(message); lucide.createIcons(); message.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); playNarration(text); }
+async function playNarration(rawText) { const text = withName(rawText); try { if (activeAudio) { activeAudio.pause(); URL.revokeObjectURL(activeAudio.src); } const response = await api('/api/narration', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, language: locale }) }); activeAudio = new Audio(URL.createObjectURL(await response.blob())); await activeAudio.play(); } catch (error) { showToast(error.message.includes('not configured') ? strings().fallbackNarration : 'Narration is unavailable right now.'); } }
+async function saveAnswer(answer) { const clean = answer.trim(); if (!clean || currentQuestion >= questions.length) return; const question = questions[currentQuestion]; textInput.disabled = true; try { const response = await api(`/api/sessions/${session.id}/responses/${question.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answer: clean, label: question.label[locale], locale: langToLocale[locale] }) }); session = await response.json(); addPatientMessage(clean); renderSummary(); textInput.value = ''; currentQuestion += 1; if (currentQuestion < questions.length) setTimeout(() => addAssistantMessage(questions[currentQuestion]), 400); else { voiceDock.classList.add('complete'); voiceStatus.textContent = 'Your intake responses are ready to review'; micButton.disabled = true; addAssistantMessage({ text: { en: 'Thank you. I have captured your responses. Please review them in the panel on the right.', hi: 'धन्यवाद। मैंने आपके उत्तर दर्ज कर लिए हैं। कृपया दाईं ओर दिए गए पैनल में उनकी समीक्षा करें।', ta: 'நன்றி. உங்கள் பதில்களை பதிவு செய்துள்ளேன். வலதுபுறத்தில் உள்ள பகுதியில் அவற்றை மதிப்பாய்வு செய்யவும்.' } }); } } catch (error) { showToast(error.message); } finally { textInput.disabled = false; textInput.focus(); } }
+function setRecording(value) { isRecording = value; voiceDock.classList.toggle('is-listening', value); micButton.classList.toggle('recording', value); micButton.innerHTML = icon(value ? 'square' : 'mic'); voiceStatus.textContent = value ? strings().recording : strings().tapToSpeak; lucide.createIcons(); }
+async function transcribeAudio() { voiceStatus.textContent = strings().transcribing; const audio = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' }); if (audio.size < 1000) { showToast(strings().voiceError); voiceStatus.textContent = strings().tapToSpeak; return; } const form = new FormData(); form.append('audio', audio, 'response.webm'); try { const response = await api('/api/transcribe', { method: 'POST', body: form }); const transcript = await response.json(); if (!transcript.text.trim()) throw new Error(strings().voiceError); await saveAnswer(transcript.text); } catch (error) { showToast(error.message === 'Request failed.' ? strings().voiceError : error.message); } finally { voiceStatus.textContent = strings().tapToSpeak; } }
+async function toggleRecording() { if (isRecording && mediaRecorder) { mediaRecorder.stop(); return; } if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { showToast('Voice recording is not supported in this browser. Please type your response.'); return; } try { const stream = await navigator.mediaDevices.getUserMedia({ audio: true }); audioChunks = []; mediaRecorder = new MediaRecorder(stream, MediaRecorder.isTypeSupported('audio/webm') ? { mimeType: 'audio/webm' } : undefined); mediaRecorder.ondataavailable = (event) => { if (event.data.size) audioChunks.push(event.data); }; mediaRecorder.onstop = async () => { stream.getTracks().forEach((track) => track.stop()); setRecording(false); await transcribeAudio(); }; mediaRecorder.start(); setRecording(true); } catch { showToast('Microphone access is needed for voice input. You can type your response instead.'); } }
+async function initialise() { applyTranslations(); try { const response = await api('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patient: (currentUser && currentUser.name) || 'Guest patient', locale: langToLocale[locale] }) }); session = await response.json(); renderSummary(); setTimeout(() => playNarration(questions[0].text[locale]), 500); } catch (error) { showToast(`Could not start intake: ${error.message}`); } }
 
-function speak(text) {
-  if (!('speechSynthesis' in window)) return;
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = selectedLanguage;
-  utterance.rate = 0.96;
-  window.speechSynthesis.speak(utterance);
-}
-
-function setListening(value) {
-  isListening = value;
-  micButton.classList.toggle('recording', value);
-  voiceDock.classList.toggle('is-listening', value);
-  micButton.innerHTML = makeIcon(value ? 'square' : 'mic');
-  voiceStatus.textContent = value ? 'Listening… speak when you’re ready' : 'Tap the microphone and speak naturally';
+micButton.addEventListener('click', toggleRecording); textForm.addEventListener('submit', (event) => { event.preventDefault(); saveAnswer(textInput.value); }); document.addEventListener('click', (event) => { const trigger = event.target.closest('.speak-trigger'); if (trigger) playNarration(trigger.dataset.text); }); $('#languageButton').addEventListener('click', () => $('#languageMenu').classList.toggle('open')); document.querySelectorAll('#languageMenu button').forEach((button) => button.addEventListener('click', () => { locale = button.dataset.lang.split('-')[0]; localStorage.setItem('meditrace.locale', locale); $('#languageName').textContent = button.dataset.name; $('#languageMenu').classList.remove('open'); applyTranslations(); renderSummary(); if (currentQuestion < questions.length) playNarration(questions[currentQuestion].text[locale]); })); $('#summaryItems').addEventListener('click', (event) => { const edit = event.target.closest('.edit-answer'); if (!edit) return; const response = session.responses[Number(edit.dataset.index)]; currentQuestion = questions.findIndex((question) => question.id === response.questionId); textInput.value = response.answer; textInput.focus(); showToast('Edit the answer, then send it to save the change.'); });
+export function startIntake(user) {
+  if (started) return; started = true;
+  if (user) currentUser = user;
+  const preferred = localStorage.getItem('meditrace.locale');
+  if (preferred && ui[preferred]) locale = preferred;
+  const languageName = $('#languageName');
+  if (languageName && localeNames[locale]) languageName.textContent = localeNames[locale];
+  const card = document.querySelector('.patient-card');
+  if (card) { const badge = card.querySelector('.avatar'); if (badge) badge.textContent = patientInitials(); const label = card.querySelector('strong'); if (label) label.textContent = (currentUser && currentUser.name) || 'Guest patient'; }
+  const firstPrompt = $('#firstPrompt');
+  if (firstPrompt) { const text = withName(questions[0].text[locale]); firstPrompt.textContent = text; const trigger = firstPrompt.closest('.message-body')?.querySelector('.speak-trigger'); if (trigger) trigger.dataset.text = text; }
   lucide.createIcons();
+  console.info(`MediTrace narration is configured for ElevenLabs voice ${VOICE_ID}.`);
+  initialise();
 }
-
-function showToast(message) {
-  toast.textContent = message;
-  toast.classList.add('show');
-  window.setTimeout(() => toast.classList.remove('show'), 3200);
-}
-
-function updateSummary() {
-  $('#responseCount').textContent = `${responses.length} of ${prompts.length}`;
-  $('#progressBar').style.width = `${(responses.length / prompts.length) * 100}%`;
-  $('#emptySummary').style.display = responses.length ? 'none' : 'flex';
-  const list = $('#summaryItems');
-  list.innerHTML = responses.map((response, index) => `<article class="summary-item"><span>${index + 1}</span><div><small>${response.label}</small><p>${response.answer}</p></div><button class="edit-answer" data-index="${index}" aria-label="Edit ${response.label}">${makeIcon('pencil')}</button></article>`).join('');
-  lucide.createIcons();
-}
-
-function appendPatientMessage(answer) {
-  const entry = document.createElement('article');
-  entry.className = 'message patient-message';
-  entry.innerHTML = `<div class="message-body"><div class="message-meta">You <span>•</span> just now</div><p></p></div><div class="patient-avatar">RP</div>`;
-  entry.querySelector('p').textContent = answer;
-  thread.append(entry);
-  entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-function appendPrompt(prompt) {
-  const entry = document.createElement('article');
-  entry.className = 'message assistant-message next-message';
-  entry.innerHTML = `<div class="assistant-avatar">${makeIcon('sparkles')}</div><div class="message-body"><div class="message-meta">MediTrace <span>•</span> just now</div><p></p><button class="listen-button speak-trigger">${makeIcon('volume-2')} Listen again</button></div>`;
-  entry.querySelector('p').textContent = prompt.text;
-  entry.querySelector('.speak-trigger').dataset.text = prompt.text;
-  thread.append(entry);
-  lucide.createIcons();
-  entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  window.setTimeout(() => speak(prompt.text), 450);
-}
-
-function submitAnswer(answer) {
-  const clean = answer.trim();
-  if (!clean) return;
-  if (currentPrompt >= prompts.length) return;
-  responses.push({ label: prompts[currentPrompt].label, answer: clean });
-  appendPatientMessage(clean);
-  updateSummary();
-  textInput.value = '';
-  currentPrompt += 1;
-  if (currentPrompt < prompts.length) {
-    window.setTimeout(() => appendPrompt(prompts[currentPrompt]), 450);
-  } else {
-    window.setTimeout(() => {
-      appendPrompt({ text: 'Thank you. I’ve captured your responses. Please take a moment to review them in the panel on the right.' });
-      voiceDock.classList.add('complete');
-      voiceStatus.textContent = 'Your intake responses are ready to review';
-      micButton.disabled = true;
-    }, 450);
-  }
-}
-
-function startRecognition() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    showToast('Voice input is not supported in this browser. You can type your response instead.');
-    textInput.focus();
-    return;
-  }
-  recognition = new SpeechRecognition();
-  recognition.lang = selectedLanguage;
-  recognition.continuous = false;
-  recognition.interimResults = true;
-  let finalText = '';
-  recognition.onstart = () => setListening(true);
-  recognition.onresult = (event) => {
-    let interim = '';
-    for (let i = event.resultIndex; i < event.results.length; i += 1) {
-      const text = event.results[i][0].transcript;
-      if (event.results[i].isFinal) finalText += text;
-      else interim += text;
-    }
-    textInput.value = finalText || interim;
-  };
-  recognition.onerror = (event) => {
-    setListening(false);
-    if (event.error !== 'aborted') showToast(event.error === 'not-allowed' ? 'Microphone access was not allowed. Type your response instead.' : 'I couldn’t hear that clearly. Please try again.');
-  };
-  recognition.onend = () => {
-    setListening(false);
-    if (finalText.trim()) submitAnswer(finalText);
-  };
-  recognition.start();
-}
-
-micButton.addEventListener('click', () => {
-  if (isListening && recognition) recognition.stop();
-  else startRecognition();
-});
-
-textForm.addEventListener('submit', (event) => { event.preventDefault(); submitAnswer(textInput.value); });
-document.addEventListener('click', (event) => { const button = event.target.closest('.speak-trigger'); if (button) speak(button.dataset.text); });
-
-$('#languageButton').addEventListener('click', () => $('#languageMenu').classList.toggle('open'));
-document.querySelectorAll('#languageMenu button').forEach((button) => button.addEventListener('click', () => {
-  selectedLanguage = button.dataset.lang;
-  $('#languageName').textContent = button.dataset.name;
-  $('#languageMenu').classList.remove('open');
-  showToast(`Voice language set to ${button.dataset.name}`);
-}));
-
-$('#summaryItems').addEventListener('click', (event) => {
-  const edit = event.target.closest('.edit-answer');
-  if (!edit) return;
-  const index = Number(edit.dataset.index);
-  textInput.value = responses[index].answer;
-  textInput.focus();
-  showToast(`Editing “${responses[index].label}”. Submit to add your updated response.`);
-});
-
-lucide.createIcons();
-window.setTimeout(() => speak(prompts[0].text), 700);
