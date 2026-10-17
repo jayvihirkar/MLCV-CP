@@ -67,6 +67,9 @@ MLCV-CP/
 - Signing back in using the same browser restores the recorded responses, next question, summary, and unfinished typed answer. Clearing browser storage removes the resume reference.
 - Sessions created before account ownership was added remain available to clinicians, but cannot be resumed through patient endpoints. New sessions can only be read or changed by their creator through those endpoints.
 - Regression checks: `node --test tests/intake-resume*.test.mjs`.
+- Restored conversations include full question text and replay buttons. New answers preserve the displayed question; older answers use the question bank as a fallback.
+- Automatic narration stays off until the patient presses the microphone during that page visit. Replay buttons remain available independently.
+- The English adaptive intake advances the sidebar and header to Health history when history questions begin, and Review when complete. The active step is restored from server state after refresh. Non-English flows retain their existing four-question intake.
 
 ### Prerequisites
 

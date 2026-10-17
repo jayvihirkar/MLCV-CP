@@ -186,7 +186,13 @@ app.get('/api/sessions/:id', authenticate, async (req, res, next) => {
   try {
     const session = findSession(await readSessions(), req.params.id);
     if (!session || session.userId !== req.user.userId) return res.status(404).json({ error: 'Intake session not found.' });
-    res.json(session);
+    const locale = String(session.locale || 'en').split('-')[0];
+    const transcript = (session.triage?.answers || session.responses || []).map((answer) => {
+      const question = questionById(answer.questionId);
+      const text = question?.text;
+      return { ...answer, questionText: answer.questionText || (typeof text === 'string' ? text : text?.[locale] || text?.en) || answer.label || 'Previous question' };
+    });
+    res.json({ ...session, transcript });
   } catch (error) { next(error); }
 });
 
@@ -222,6 +228,7 @@ function triagePayload(session) {
     remaining: resolved.complete || resolved.escalated ? 0 : candidateQuestions(state).length,
     complete: resolved.complete,
     escalated: resolved.escalated,
+    step: resolved.complete ? 4 : ([resolved.question, ...state.answers.map((answer) => questionById(answer.questionId))].some((question) => question?.phase === 'history') ? 3 : 2),
     question: resolved.question || null,
   };
   if (resolved.escalated) payload.escalation = escalationMessage(state);
@@ -252,6 +259,9 @@ app.post('/api/sessions/:id/turn', authenticate, async (req, res, next) => {
     if (!question) return res.json(triagePayload(session));
 
     applyAnswer(state, question.id, answer, null, current.question && current.question.id === question.id ? current.question.summaryLabel : null);
+    const questionText = current.question?.id === question.id ? current.question.text : question.text;
+    const locale = String(session.locale || 'en').split('-')[0];
+    state.answers[state.answers.length - 1].questionText = typeof questionText === 'string' ? questionText : questionText?.[locale] || questionText?.en;
     session.updatedAt = new Date().toISOString();
 
     if (!state.escalated && geminiConfigured()) {

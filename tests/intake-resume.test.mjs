@@ -60,9 +60,26 @@ test('saved intake survives login and server restart, and rejects other accounts
     await stop();
     await start();
     patient = await login('ramesh.patel@example.com');
+    const history = await (await request(path, patient)).json();
+    assert.equal(history.transcript[0].questionText, initial.question.text);
+    assert.equal(history.transcript[0].answer, 'I have a fever');
     const restored = await (await request(`${path}/triage`, patient)).json();
     assert.deepEqual(restored.answered, next.answered);
     assert.equal(restored.question.id, next.question.id);
+    let progress = restored;
+    let reachedHistory = false;
+    for (let turnIndex = 0; turnIndex < 40 && !progress.complete && !progress.escalated; turnIndex++) {
+      if (progress.step === 3) reachedHistory = true;
+      const answer = progress.question.id === 'fv-hydration' ? 'Yes' : progress.question.kind === 'boolean' ? 'No' : progress.question.kind === 'number' ? '3' : 'None';
+      const result = await request(`${path}/turn`, patient, 'POST', { questionId: progress.question.id, answer });
+      assert.equal(result.status, 200);
+      progress = await result.json();
+      const reloaded = await (await request(`${path}/triage`, patient)).json();
+      assert.equal(reloaded.step, progress.step, 'Refresh must preserve the current step');
+    }
+    assert.ok(reachedHistory, 'The intake must transition to health history');
+    assert.equal(progress.step, 4);
+    assert.equal(progress.complete, true);
     assert.equal((await request('/api/sessions/missing', patient)).status, 404);
   } finally {
     if (server) await stop();

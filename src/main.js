@@ -13,6 +13,22 @@ let currentQuestion = null;
 let lastQuestionEl = null;
 let submitting = false;
 let transcribing = false;
+// Voice is opt-in for each page visit, including restored intakes.
+let voiceEnabled = false;
+let intakeStep = 2;
+function renderSteps(step = intakeStep) {
+  intakeStep = step;
+  document.querySelectorAll('.steps .step').forEach((element, index) => {
+    const number = index + 1;
+    element.className = `step${number < step ? ' complete' : number === step ? ' current' : ''}`;
+    if (number === step) element.setAttribute('aria-current', 'step');
+    else element.removeAttribute('aria-current');
+    element.querySelector('span').innerHTML = number < step ? icon('check') : String(number);
+    element.querySelector('small').textContent = number < step ? strings().completed : number === step ? strings().inProgress : strings().upNext;
+  });
+  $('[data-i18n="stepOfFour"]').textContent = strings().stepOfFour.replace('2', String(step));
+  if (window.lucide) lucide.createIcons();
+}
 const savedIntakeKey = () => `meditrace.intake.${currentUser.id}`;
 function rememberIntake() {
   if (session && currentUser) localStorage.setItem(savedIntakeKey(), JSON.stringify({ id: session.id, draft: textInput.value }));
@@ -62,6 +78,7 @@ function applyTranslations() {
   document.querySelectorAll('[data-i18n]').forEach((element) => { element.innerHTML = strings()[element.dataset.i18n]; });
   textInput.placeholder = strings().typePlaceholder;
   if (!isRecording) voiceStatus.textContent = strings().tapToSpeak;
+  renderSteps();
 }
 
 function addPatientMessage(answer) {
@@ -74,7 +91,7 @@ function addPatientMessage(answer) {
   return message;
 }
 
-function addAssistantMessage(rawText) {
+function addAssistantMessage(rawText, { narrate = true } = {}) {
   const text = withName(rawText);
   const message = document.createElement('article');
   message.className = 'message assistant-message next-message';
@@ -84,7 +101,7 @@ function addAssistantMessage(rawText) {
   thread.append(message);
   lucide.createIcons();
   message.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  if (rawText && /[?.]$/.test(String(rawText).trim())) playNarration(text);
+  if (narrate && voiceEnabled && rawText && /[?.]$/.test(String(rawText).trim())) playNarration(text);
   return message;
 }
 
@@ -157,13 +174,14 @@ function renderQuestion(question, { append = true } = {}) {
     lastQuestionEl.querySelector('p').textContent = withName(question.text);
     const trigger = lastQuestionEl.querySelector('.speak-trigger');
     if (trigger) trigger.dataset.text = withName(question.text);
-    playNarration(question.text);
+    if (voiceEnabled) playNarration(question.text);
   }
   renderChips(question);
   textInput.focus();
 }
 
 function renderTriage(payload) {
+  renderSteps(payload.escalated ? intakeStep : payload.step || (payload.complete ? 4 : payload.question?.phase === 'history' ? 3 : 2));
   renderSummaryItems(payload.answered);
   const answeredCount = (payload.answered || []).length;
   const remaining = typeof payload.remaining === 'number' ? payload.remaining : 0;
@@ -277,14 +295,30 @@ function startBrowserRecognition() {
   activeRecognition.interimResults = false;
   activeRecognition.maxAlternatives = 1;
   activeRecognition.onstart = () => setRecording(true);
-  activeRecognition.onerror = (event) => { setRecording(false); activeRecognition = null; showToast(event.error === 'not-allowed' ? 'Microphone access is needed for voice input. You can type your response instead.' : strings().voiceError); };
+  activeRecognition.onerror = (event) => {
+    setRecording(false);
+    activeRecognition = null;
+    const messages = {
+      'not-allowed': 'Microphone or speech recognition permission was denied. Allow microphone access in your browser settings, then try again.',
+      'service-not-allowed': 'This browser does not allow its speech recognition service. Open this app in Chrome or Edge, or configure server transcription.',
+      'network': 'The browser speech recognition service could not connect. Try Chrome or Edge with an internet connection, or configure server transcription.',
+      'audio-capture': 'No working microphone was found. Check your microphone and Windows input settings.',
+      'no-speech': 'No speech was detected. Tap the microphone and start speaking after it shows Recording.',
+      'language-not-supported': 'This browser does not support speech recognition for the selected language. Try another language or use text input.',
+    };
+    if (event.error !== 'aborted') showToast(messages[event.error] || `Browser speech recognition stopped (${event.error || 'unknown error'}). Try Chrome or Edge, or type your response.`);
+  };
   activeRecognition.onend = () => { setRecording(false); activeRecognition = null; };
   activeRecognition.onresult = (event) => { const text = ((event.results[0] && event.results[0][0] && event.results[0][0].transcript) || '').trim(); if (text) sendAnswer(text); else showToast(strings().voiceError); };
   try { activeRecognition.start(); } catch { showToast('Voice input is not supported in this browser.'); activeRecognition = null; }
 }
 
 async function toggleRecording() {
+  if (submitting || transcribing) return;
   if (textInput.disabled && !isRecording) return;
+  voiceEnabled = true;
+  if (activeAudio) activeAudio.pause();
+  window.speechSynthesis?.cancel();
   if (sttMode === 'browser') { if (activeRecognition && isRecording) { activeRecognition.stop(); return; } startBrowserRecognition(); return; }
   if (isRecording && mediaRecorder) { mediaRecorder.stop(); return; }
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { sttMode = 'browser'; startBrowserRecognition(); return; }
@@ -333,11 +367,8 @@ async function initialise() {
         locale = session.locale.split('-')[0];
         $('#languageName').textContent = localeNames[locale] || localeNames.en;
         applyTranslations();
-        for (const answer of session.triage?.answers || session.responses || []) {
-          const question = document.createElement('article');
-          question.className = 'message assistant-message';
-          question.textContent = answer.label || answer.questionId;
-          thread.append(question);
+        for (const answer of session.transcript || session.triage?.answers || session.responses || []) {
+          addAssistantMessage(answer.questionText || answer.label || answer.questionId, { narrate: false });
           addPatientMessage(answer.answer);
         }
         await loadTriage();
