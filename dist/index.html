@@ -9,8 +9,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet" />
     <script src="https://unpkg.com/lucide@latest"></script>
-    <script type="module" crossorigin src="/assets/index-BlXHEsyM.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Bfre8o2r.css">
+    <script type="module" crossorigin src="/assets/index-CM5alX11.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DIkSxnFC.css">
   </head>
   <body>
     <section class="login-screen" id="loginScreen">
@@ -173,6 +173,16 @@
           </div>
         </header>
 
+        <section class="escalation-banner" id="escalationBanner" role="alert" hidden>
+          <div class="escalation-icon"><i data-lucide="shield-alert"></i></div>
+          <div class="escalation-copy">
+            <h3 id="escalationHeadline">This may need urgent attention</h3>
+            <p id="escalationBody"></p>
+            <p class="escalation-advice" id="escalationAdvice"></p>
+            <p class="escalation-disclaimer" id="escalationDisclaimer">This is not a diagnosis. It is a safety check based on what you reported.</p>
+          </div>
+        </section>
+
         <section class="conversation" aria-live="polite">
           <div class="intro-row">
             <div><p class="eyebrow" data-i18n="letsBegin">Let’s begin</p><h1 data-i18n="pageTitle">Tell me what brings<br/>you in today.</h1></div>
@@ -182,7 +192,7 @@
           <div class="thread" id="thread">
             <article class="message assistant-message">
               <div class="assistant-avatar"><i data-lucide="sparkles"></i></div>
-              <div class="message-body"><div class="message-meta">MediTrace <span>•</span> just now</div><p id="firstPrompt">Hello Ramesh. I’ll help your care team understand how you’re feeling. What is bothering you today?</p><button class="listen-button speak-trigger" data-text="Hello Ramesh. I’ll help your care team understand how you’re feeling. What is bothering you today?"><i data-lucide="volume-2"></i> Listen again</button></div>
+              <div class="message-body"><div class="message-meta">MediTrace <span>•</span> just now</div><p id="firstPrompt">Hello Ramesh. I’ll help your care team understand how you’re feeling.</p><button class="listen-button speak-trigger" data-text="Hello Ramesh. I’ll help your care team understand how you’re feeling."><i data-lucide="volume-2"></i> Listen again</button></div>
             </article>
           </div>
         </section>
@@ -190,6 +200,7 @@
         <section class="voice-dock" id="voiceDock">
           <div class="wave-area" id="waveArea" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
           <p class="listening-label" id="voiceStatus">Tap the microphone and speak naturally</p>
+          <div class="quick-replies" id="quickReplies" hidden></div>
           <button class="mic-button" id="micButton" aria-label="Start voice input"><i data-lucide="mic"></i></button>
           <div class="or-line"><span></span> <span data-i18n="orType">or type your response</span> <span></span></div>
           <form class="text-entry" id="textForm"><input id="textInput" type="text" autocomplete="off" placeholder="Type your response here..." /><button aria-label="Send response" type="submit"><i data-lucide="arrow-up"></i></button></form>

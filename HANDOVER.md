@@ -14,11 +14,11 @@ It does not include medical diagnosis, clinical NLP, document OCR, or a producti
 - A demo credentials card with one-tap copy buttons for the email and password and a "Fill demo credentials" action.
 - A polished, responsive three-panel patient intake interface.
 - Microphone recording through the browser MediaRecorder API.
-- ElevenLabs Scribe v2 transcription through the local backend, avoiding the unreliable browser-only speech recognizer.
-- ElevenLabs narration using voice ID `7qBNUtXRGP0jPi0H4r8k` and the multilingual model.
+- Gemini (`gemini-3.5-transcribe`) speech-to-text through the local backend, avoiding the unreliable browser-only speech recognizer. The browser recording (WebM/Opus) is sent straight to Gemini; if `GEMINI_API_KEY` is missing, voice input falls back to the browser SpeechRecognition API.
+- ElevenLabs narration using a free-plan-friendly voice (default `EXAVITQu4vr4xnSDxMaL`/Bella, override with `ELEVENLABS_VOICE_ID`); if ElevenLabs is missing or a voice is unavailable, spoken prompts fall back to the device voice.
 - A microphone control with an active listening state and animated waveform.
 - A text-field fallback when voice input is unavailable or not preferred.
-- A four-question, guided intake flow:
+- An adaptive, server-driven intake for English (see “Adaptive intake” below): a safety-first flow that classifies the chief complaint, screens warning signs first, then follows the relevant clinical branch. Hindi, Marathi, and Tamil keep the original four-question linear flow:
   1. Main concern
   2. When the symptoms started
   3. Severity
@@ -40,9 +40,11 @@ MLCV-CP/
 ├── index.html          # Page structure, login screen, patient portal, doctor root
 ├── package.json        # Vite scripts and dependency definition
 ├── server/
-│   ├── index.mjs       # API, local auth, ElevenLabs proxy, doctor API, local stores
+│   ├── index.mjs       # API, local auth, ElevenLabs proxy, triage endpoints, doctor API, local stores
+│   ├── triage.mjs      # Adaptive intake engine: question flows, complaint routing, red-flag rules
+│   ├── llm.mjs         # Gemini adapter: speech-to-text + next-question selection + warning-sign detection
 │   └── mock-data.mjs   # Clearly-labelled fictional demo patients (mock adapter)
-├── .env.example        # ElevenLabs and Google OAuth config template
+├── .env.example        # ElevenLabs, Gemini and Google OAuth config template
 ├── data/
 │   ├── intakes.json    # Persistent intake sessions (ignored from git)
 │   ├── users.json      # Local prototype accounts (ignored from git, seeded on first run)
@@ -68,7 +70,7 @@ MLCV-CP/
 ```powershell
 npm install
 Copy-Item .env.example .env
-# Add ELEVENLABS_API_KEY to .env
+# Add ELEVENLABS_API_KEY (narration) and GEMINI_API_KEY (voice input + adaptive intake) to .env.
 npm run dev
 ```
 
@@ -114,10 +116,22 @@ The production files are created in `dist/`.
 
 1. The page greets the patient and speaks the first question.
 2. The patient can press the microphone and speak, or type an answer.
-3. Audio is sent to the local backend, then transcribed by ElevenLabs Scribe v2.
+3. Audio is sent to the local backend, then transcribed by Gemini (`gemini-3.5-transcribe`, `GEMINI_API_KEY`). If no key is set, the browser SpeechRecognition API is used instead.
 4. A completed answer is stored in the local session store, then added to the conversation and intake summary.
 5. MediTrace shows and speaks the next question.
-6. After four responses, the workflow displays a completion message and disables additional microphone capture.
+6. When the flow finishes, the workflow displays a completion message and disables additional microphone capture. For English sessions, the next question is chosen by the adaptive engine (below); for other languages the original four-question sequence is used.
+
+Quick-reply chips are offered for yes/no, single-choice, multi-choice, and 0–10 severity questions, so the patient can tap instead of typing or speaking.
+
+## Adaptive intake
+
+The English intake is a **hybrid** system that keeps safety deterministic and uses the LLM only for relevance:
+
+- `server/triage.mjs` owns the structure: it classifies the chief complaint by keyword (chest pain, breathing, headache, fever, abdominal pain, or a general fallback), runs warning-sign ("red flag") screening first in every branch, and then follows the matching clinical flow. Rules interpret answers and decide, on their own, whether a warning sign has been reported.
+- `server/llm.mjs` is an optional Gemini adapter (`GEMINI_API_KEY`). When configured, it selects the most relevant **next** question from the allowed list and can flag warning signs already covered by the rules when the patient mentions them in free text. It never diagnoses, never invents questions, and never gives advice. Without a key, the engine runs fully rule-based.
+- **Emergency escalation:** if any red-flag question is answered positively (or the model flags an allowed warning sign), the session is marked urgent and routine questions stop. The patient sees a prominent banner advising them to call emergency services or go to the nearest emergency department, with the exact reported warning signs. The banner is explicitly non-diagnostic.
+- New API routes: `GET /api/sessions/:id/triage` (current state + next question) and `POST /api/sessions/:id/turn` (submit one answer, receive the next state). `GET /api/health` reports `geminiConfigured`.
+- The clinician workspace reads the adaptive state: escalated intakes appear as **flagged / high priority**, and the record's summary, evidence, and flags are built from the triage answers.
 
 ## Clinician workspace
 
@@ -149,8 +163,10 @@ Signing in with a clinician account opens a separate, doctor-facing interface. T
 ## Important browser notes
 
 - The browser must be allowed to access the microphone before voice capture can work.
-- The app requires an `ELEVENLABS_API_KEY` in `.env` for voice input and narration. It is never exposed to the browser.
-- If microphone access or ElevenLabs is unavailable, the user can still complete the flow with text input.
+- Voice **input** (speech-to-text) uses `GEMINI_API_KEY` (model `gemini-3.5-transcribe`, override with `GEMINI_STT_MODEL`); voice **output** (narration) uses `ELEVENLABS_API_KEY`. Neither key is ever exposed to the browser.
+- Transcription runs in Gemini's **SMART** mode (removes filler words, tidies formatting) and is biased with a **custom vocabulary** of common Indian medicine brand names (Crocin, Disprin, Dolo, Combiflam, Telma, etc.), because generic speech models routinely mangle drug names. Extend the list with the comma-separated `GEMINI_STT_VOCABULARY` env var. The recording's language is sent so the model transcribes in the right language.
+- If the Gemini key is missing, voice input falls back to the browser SpeechRecognition API. If ElevenLabs is missing, or a voice returns `paid_plan_required`, narration falls back to the device voice.
+- If microphone access is unavailable, the user can still complete the flow with text input or the quick-reply chips.
 - ElevenLabs usage can incur costs; configure suitable account limits before demos.
 
 ## Verification completed
@@ -161,9 +177,10 @@ Signing in with a clinician account opens a separate, doctor-facing interface. T
 - Auth was checked against the running API: bad credentials return `401`, protected routes return `401` without a token, and login returns a token that restores the session.
 - The four login-screen languages and their translated copy were checked against the built output.
 - Google OAuth was checked unconfigured: `/api/auth/providers` reports `google: false`, `/api/health` reports `googleConfigured: false`, and `/api/auth/google` returns `503` instead of faking a login. The full consent/callback flow still requires real Google credentials to test.
-- The new API routes are ready for an ElevenLabs key; live transcription/narration should be tested after adding one.
+- Gemini transcription was verified against the live API with `gemini-3.5-transcribe`: a sample audio clip was transcribed correctly, and `POST /api/transcribe` returned the transcript through the running server. Narration still needs a live ElevenLabs key to exercise end-to-end.
 - The doctor API was smoke-tested against a temporary server instance: clinician login succeeds with specialty, `GET /api/doctor/overview` returns correct counts, `GET /api/doctor/patients/:id` returns a full record, `PUT .../summary` saves edits, `POST .../decision` records approval and updates the counts, and a patient token receives `403` on the doctor routes.
 - The doctor workspace was verified through a successful `npm run build`. End-to-end clicking through the workspace has not yet been exercised in a browser from this environment.
+- The adaptive intake was smoke-tested against a temporary server instance (rules-only, no Gemini key): chest pain escalated after the first severe-pain red flag; the fever branch followed `duration → measured → red-flag → other symptoms → breathing (because a cough was reported) → hydration`; a thunderclap headache escalated; an `hi-IN` session used the legacy linear flow; and a completed intake appeared in the doctor queue as `awaiting_review` with 5 summary sections and 10 evidence items. It was then re-tested with Gemini enabled (`gemini-3.8-flash`): all scenarios behaved correctly and next-question selection ran through the model without errors. Browser click-through of the banner and quick-reply chips has not yet been done from this environment.
 
 ## Suggested next work
 

@@ -6,12 +6,15 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { mockPatients, mockDoctorProfiles } from './mock-data.mjs';
+import { createTriageState, resolveQuestion, finalise, applyAnswer, candidateQuestions, redFlagOptions, flagRedFlags, escalationMessage, questionById } from './triage.mjs';
+import { geminiConfigured, analyseTurn, transcribeWithGemini, geminiSttModel } from './llm.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dataFile = join(root, 'data', 'intakes.json');
 const usersFile = join(root, 'data', 'users.json');
 const reviewsFile = join(root, 'data', 'reviews.json');
-const voiceId = '7qBNUtXRGP0jPi0H4r8k';
+const defaultVoiceId = 'EXAVITQu4vr4xnSDxMaL';
+const voiceId = () => process.env.ELEVENLABS_VOICE_ID || defaultVoiceId;
 const tokenTtl = 1000 * 60 * 60 * 8;
 const authTokens = new Map();
 const googleStates = new Map();
@@ -100,7 +103,7 @@ const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 app.use(express.json({ limit: '200kb' }));
 
-app.get('/api/health', (_req, res) => res.json({ ok: true, elevenLabsConfigured: Boolean(process.env.ELEVENLABS_API_KEY), googleConfigured: googleConfigured(), voiceId }));
+app.get('/api/health', (_req, res) => res.json({ ok: true, elevenLabsConfigured: Boolean(process.env.ELEVENLABS_API_KEY), geminiConfigured: geminiConfigured(), sttModel: geminiSttModel(), googleConfigured: googleConfigured(), voiceId: voiceId() }));
 
 app.get('/api/auth/providers', (_req, res) => res.json({ google: googleConfigured() }));
 
@@ -162,7 +165,16 @@ app.get('/api/auth/google/callback', async (req, res, next) => {
 app.post('/api/sessions', authenticate, async (req, res, next) => {
   try {
     const sessions = await readSessions();
-    const session = { id: crypto.randomUUID(), patient: req.body.patient || 'Guest patient', locale: req.body.locale || 'en-IN', responses: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    const locale = req.body.locale || 'en-IN';
+    const session = {
+      id: crypto.randomUUID(),
+      patient: req.body.patient || 'Guest patient',
+      locale,
+      responses: [],
+      triage: createTriageState({ adaptive: String(locale).toLowerCase().startsWith('en') }),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
     sessions.push(session);
     await writeSessions(sessions);
     res.status(201).json(session);
@@ -193,12 +205,78 @@ app.put('/api/sessions/:id/responses/:questionId', authenticate, async (req, res
   } catch (error) { next(error); }
 });
 
+function ensureTriage(session) {
+  if (!session.triage) session.triage = createTriageState({ adaptive: String(session.locale || 'en').toLowerCase().startsWith('en') });
+  return session.triage;
+}
+
+function triagePayload(session) {
+  const state = ensureTriage(session);
+  finalise(state);
+  const resolved = resolveQuestion(state, session.locale || 'en');
+  const { answered, ...rest } = state;
+  const payload = {
+    state: rest,
+    answered: state.answers.map((item) => ({ label: item.label, answer: item.answer })),
+    remaining: resolved.complete || resolved.escalated ? 0 : candidateQuestions(state).length,
+    complete: resolved.complete,
+    escalated: resolved.escalated,
+    question: resolved.question || null,
+  };
+  if (resolved.escalated) payload.escalation = escalationMessage(state);
+  return payload;
+}
+
+app.get('/api/sessions/:id/triage', authenticate, async (req, res, next) => {
+  try {
+    const session = findSession(await readSessions(), req.params.id);
+    if (!session) return res.status(404).json({ error: 'Intake session not found.' });
+    res.json(triagePayload(session));
+  } catch (error) { next(error); }
+});
+
+app.post('/api/sessions/:id/turn', authenticate, async (req, res, next) => {
+  try {
+    const answer = String(req.body.answer || '').trim();
+    if (!answer || answer.length > 2000) return res.status(400).json({ error: 'A response of up to 2,000 characters is required.' });
+    const sessions = await readSessions();
+    const session = findSession(sessions, req.params.id);
+    if (!session) return res.status(404).json({ error: 'Intake session not found.' });
+    const state = ensureTriage(session);
+    if (state.escalated) return res.json(triagePayload(session));
+
+    const current = resolveQuestion(state, session.locale || 'en');
+    const requestedId = String(req.body.questionId || '').trim();
+    const question = requestedId ? questionById(requestedId) : current.question;
+    if (!question) return res.json(triagePayload(session));
+
+    applyAnswer(state, question.id, answer, null, current.question && current.question.id === question.id ? current.question.summaryLabel : null);
+    session.updatedAt = new Date().toISOString();
+
+    if (!state.escalated && geminiConfigured()) {
+      const candidates = candidateQuestions(state);
+      const redFlags = redFlagOptions(state);
+      if (candidates.length) {
+        const analysis = await analyseTurn({ state, question, answerText: answer, candidates, redFlags });
+        if (analysis) {
+          if (analysis.redFlagIds.length) flagRedFlags(state, analysis.redFlagIds, answer);
+          if (!state.escalated && candidates.some((item) => item.id === analysis.nextQuestionId)) state.nextQuestionId = analysis.nextQuestionId;
+        }
+      }
+    }
+
+    finalise(state);
+    await writeSessions(sessions);
+    res.json(triagePayload(session));
+  } catch (error) { next(error); }
+});
+
 app.post('/api/narration', authenticate, async (req, res, next) => {
   try {
     if (!process.env.ELEVENLABS_API_KEY) return res.status(503).json({ error: 'ElevenLabs is not configured. Add ELEVENLABS_API_KEY to .env and restart the app.' });
     const text = String(req.body.text || '').trim();
     if (!text || text.length > 5000) return res.status(400).json({ error: 'Narration text is required.' });
-    const upstream = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`, {
+    const upstream = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId()}?output_format=mp3_44100_128`, {
       method: 'POST',
       headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
       body: JSON.stringify({ text, model_id: 'eleven_multilingual_v2', voice_settings: { stability: 0.58, similarity_boost: 0.8, style: 0.15, use_speaker_boost: true } }),
@@ -211,15 +289,11 @@ app.post('/api/narration', authenticate, async (req, res, next) => {
 
 app.post('/api/transcribe', authenticate, upload.single('audio'), async (req, res, next) => {
   try {
-    if (!process.env.ELEVENLABS_API_KEY) return res.status(503).json({ error: 'ElevenLabs is not configured. Add ELEVENLABS_API_KEY to .env and restart the app.' });
     if (!req.file) return res.status(400).json({ error: 'Audio is required.' });
-    const form = new FormData();
-    form.append('file', new Blob([req.file.buffer], { type: req.file.mimetype || 'audio/webm' }), 'response.webm');
-    form.append('model_id', 'scribe_v2');
-    const upstream = await fetch('https://api.elevenlabs.io/v1/speech-to-text', { method: 'POST', headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY }, body: form });
-    if (!upstream.ok) return res.status(upstream.status).json({ error: 'ElevenLabs transcription failed.', detail: await upstream.text() });
-    const transcript = await upstream.json();
-    res.json({ text: transcript.text || '', language: transcript.language_code || null });
+    const result = await transcribeWithGemini({ buffer: req.file.buffer, mimeType: req.file.mimetype || 'audio/webm', languageCode: req.body.locale ? String(req.body.locale) : null });
+    if (result.unconfigured) return res.status(503).json({ error: 'Gemini is not configured. Add GEMINI_API_KEY to .env and restart the app.' });
+    if (result.status) return res.status(result.status >= 400 && result.status < 600 ? result.status : 502).json({ error: 'Gemini transcription failed.', detail: result.detail });
+    res.json({ text: result.text || '', language: null });
   } catch (error) { next(error); }
 });
 
@@ -276,7 +350,78 @@ function mockRecord(patient) {
   };
 }
 
+function triageRecord(session) {
+  const triage = session.triage;
+  const answers = Array.isArray(triage.answers) ? triage.answers : [];
+  const evidence = answers.map((item, index) => ({
+    id: `ev-${String(session.id).slice(0, 8)}-${index + 1}`,
+    label: item.label || item.questionId,
+    kind: 'response',
+    sourceLabel: 'Patient response',
+    date: item.at || session.updatedAt,
+    excerpt: item.answer,
+  }));
+  const evFor = (questionId) => { const index = answers.findIndex((item) => item.questionId === questionId); return index === -1 ? [] : [`ev-${String(session.id).slice(0, 8)}-${index + 1}`]; };
+  const answerFor = (questionId) => (answers.find((item) => item.questionId === questionId)?.answer || '').trim();
+  const severityMatch = String(answerFor('ha-severity') || answerFor('ap-severity') || answerFor('df-severity') || '').match(/\b(\d{1,2})\b/);
+  const severity = typeof triage.severity === 'number' ? triage.severity : (severityMatch ? Number(severityMatch[1]) : null);
+  const escalated = Boolean(triage.escalated);
+  const associated = Array.isArray(triage.associatedSymptoms) ? triage.associatedSymptoms.join(', ') : '';
+  const flags = [];
+  if (escalated) {
+    flags.push({ id: 'fl-urgent', title: 'Urgent warning signs reported', detail: (triage.redFlags || []).map((flag) => flag.label).join('; ') || 'Warning signs reported during intake.', why: 'The intake escalated for urgent clinician attention based on reported symptoms. This is not a diagnosis.', kind: 'patient_reported', severity: 'high', sourceLabel: 'Adaptive intake screen', evidenceId: null });
+  }
+  if (Number.isFinite(severity) && severity >= 7) {
+    flags.push({ id: 'fl-severity-high', title: 'High reported severity', detail: `Patient reported severity of ${severity}/10.`, why: 'A high self-reported severity may warrant prioritisation. This is a patient estimate, not a clinical score.', kind: 'patient_reported', severity: 'high', sourceLabel: 'Patient response', evidenceId: null });
+  }
+  if (!triage.complete && !escalated) {
+    flags.push({ id: 'fl-intake-incomplete', title: 'Incomplete intake', detail: 'The patient has not finished the adaptive intake.', why: 'Some history sections are still missing and may need to be gathered at the visit.', kind: 'ai_inference', severity: 'medium', sourceLabel: 'Intake completeness check', evidenceId: null });
+  }
+  const hpiParts = [];
+  if (triage.duration) hpiParts.push(`Duration: ${triage.duration}.`);
+  if (associated) hpiParts.push(`Associated symptoms reported: ${associated}.`);
+  const meds = answerFor('cp-medications') || answerFor('br-medications') || answerFor('ha-medications') || answerFor('fv-medications') || answerFor('ap-medications') || answerFor('df-medications');
+  const allergies = answerFor('cp-allergies') || answerFor('br-allergies') || answerFor('ha-allergies') || answerFor('fv-allergies') || answerFor('ap-allergies') || answerFor('df-allergies');
+  const other = answerFor('cp-anything-else') || answerFor('br-anything-else') || answerFor('ha-anything-else') || answerFor('fv-anything-else') || answerFor('ap-anything-else') || answerFor('df-anything-else');
+  return {
+    id: `INTAKE-${String(session.id).slice(0, 8)}`,
+    demo: false,
+    source: 'intake',
+    name: session.patient || 'Patient',
+    age: null,
+    sex: null,
+    phone: null,
+    city: null,
+    language: session.locale || 'en-IN',
+    doctor: null,
+    reason: triage.chiefComplaint || 'Not provided',
+    priority: escalated || (Number.isFinite(severity) && severity >= 7) ? 'high' : 'medium',
+    status: escalated ? 'flagged' : (triage.complete ? 'awaiting_review' : 'incomplete'),
+    appointment: session.createdAt,
+    submittedAt: session.updatedAt,
+    overview: { chiefComplaint: triage.chiefComplaint || null, allergies: allergies ? [{ name: allergies, reaction: 'As reported' }] : [], medications: meds ? [{ name: meds, dose: '', frequency: 'As reported' }] : [], conditions: [], notes: triage.complaintLabel ? `Intake category: ${triage.complaintLabel}` : null },
+    summary: {
+      generatedAt: session.updatedAt,
+      model: 'MediTrace adaptive intake (structured from patient responses)',
+      sections: [
+        { id: 'chief-complaint', title: 'Chief complaint', body: triage.chiefComplaint || 'Not provided', sources: evFor('chief-complaint') },
+        { id: 'hpi', title: 'History of present illness', body: hpiParts.join(' ') || 'Not provided', sources: [] },
+        { id: 'red-flags', title: 'Reported warning signs', body: escalated ? (triage.redFlags || []).map((flag) => flag.label).join('; ') : 'None reported.', sources: [] },
+        { id: 'medications-allergies', title: 'Medications & allergies', body: `Medications: ${meds || 'Not provided'}. Allergies: ${allergies || 'Not provided'}.`, sources: [] },
+        { id: 'other', title: 'Other details', body: other || 'Not provided', sources: [] },
+      ],
+    },
+    timeline: [{ id: `tl-${String(session.id).slice(0, 8)}`, date: session.createdAt, type: 'intake', title: 'Adaptive intake session', detail: escalated ? 'Escalated for urgent attention during the intake.' : (triage.complete ? 'Adaptive intake completed.' : 'Adaptive intake in progress.'), sourceLabel: 'Intake session', evidenceId: null }],
+    flags,
+    evidence,
+    documents: [],
+    clarification: [],
+    intake: { completed: Boolean(triage.complete), missing: triage.complete ? [] : ['Intake not finished'], responses: answers.map((item) => ({ questionId: item.questionId, label: item.label, answer: item.answer })), documents: [] },
+  };
+}
+
 function realRecord(session) {
+  if (session.triage && (session.triage.answers?.length || session.triage.escalated)) return triageRecord(session);
   const responses = Array.isArray(session.responses) ? session.responses : [];
   const answer = (id) => String(responses.find((item) => item.questionId === id)?.answer || '').trim();
   const evByQuestion = {};
