@@ -132,17 +132,9 @@
 
     <main class="app-shell">
       <aside class="side-panel">
-        <a class="brand" href="#" aria-label="MediTrace home">
-          <span class="brand-mark"><i data-lucide="activity"></i></span>
-          <span>Medi<span>Trace</span></span>
-        </a>
+        <button type="button" id="closeChatSidebar" class="sidebar-mobile-close" aria-label="Close conversation sidebar">×</button>
 
-        <div class="patient-card">
-          <div class="avatar">RP</div>
-          <div><strong>Ramesh Patel</strong><span data-i18n="newConsultation">New consultation</span></div>
-          <button class="more" aria-label="Patient options"><i data-lucide="ellipsis"></i></button>
-        </div>
-
+        <a class="brand small-brand" href="#" aria-label="MediTrace home"><span class="brand-mark"><i data-lucide="activity"></i></span><span>Medi<span>Trace</span></span></a>
         <nav class="steps" aria-label="Intake progress">
           <p class="eyebrow" data-i18n="todaysIntake">Today’s intake</p>
           <a class="step complete" href="#"><span><i data-lucide="check"></i></span><div><b data-i18n="welcome">Welcome</b><small data-i18n="completed">Completed</small></div></a>
@@ -150,24 +142,30 @@
           <a class="step" href="#"><span>3</span><div><b data-i18n="healthHistory">Health history</b><small data-i18n="upNext">Up next</small></div></a>
           <a class="step" href="#"><span>4</span><div><b data-i18n="review">Review</b><small data-i18n="upNext">Up next</small></div></a>
         </nav>
+        <section id="chatHistory" class="sidebar-history" hidden aria-label="Your conversations">
+          <div class="sidebar-history-heading"><h2>Conversations</h2><button type="button" id="createChatGroup">＋ New group</button></div>
+          <div id="conversationList" class="side-conversation-scroll" tabindex="0" aria-label="Scrollable conversation history"></div>
+        </section>
+        <p id="conversationSidebarStatus" class="sidebar-status" role="status"></p>
+        <button type="button" id="retryConversations" class="quick-chip sidebar-retry" hidden>Retry loading conversations</button>
 
-        <div class="privacy-note"><i data-lucide="shield-check"></i><p><b data-i18n="privateByDesign">Private by design</b><br/><span data-i18n="privacyText">Your answers are saved to your local intake session and shown in your summary for review.</span></p></div>
-        <button class="end-button"><i data-lucide="save"></i> <span data-i18n="saveLater">End & save later</span></button>
+        <button type="button" id="newSidebarConversation" class="sidebar-new-chat sidebar-new-chat-bottom">＋ New conversation</button>
         <button class="signout-button" id="signOutButton"><i data-lucide="power"></i> <span>Sign out</span></button>
       </aside>
+      <button type="button" id="chatSidebarBackdrop" class="chat-sidebar-backdrop" aria-label="Close conversation sidebar" hidden></button>
 
       <section class="workspace">
         <header>
+          <button type="button" id="openChatSidebar" class="chat-sidebar-toggle" aria-label="Open conversations" aria-expanded="false"><i data-lucide="panel-left"></i></button>
           <div class="crumb"><span class="live-dot"></span> <span data-i18n="voiceIntake">Voice-assisted intake</span> <span class="slash">/</span> <span data-i18n="stepOfFour">Step 2 of 4</span></div>
           <div class="header-actions">
-            <button class="language-button" id="languageButton"><i data-lucide="languages"></i><span id="languageName">English</span><i data-lucide="chevron-down"></i></button>
-            <div class="language-menu" id="languageMenu">
-              <button data-lang="en-IN" data-name="English">English</button>
-              <button data-lang="hi-IN" data-name="हिन्दी">हिन्दी</button>
-              <button data-lang="mr-IN" data-name="मराठी">मराठी</button>
-              <button data-lang="ta-IN" data-name="தமிழ்">தமிழ்</button>
-            </div>
-            <button class="help-button" aria-label="Help"><i data-lucide="circle-help"></i></button>
+        <div class="patient-card">
+          <div class="avatar">RP</div>
+          <div><strong>Ramesh Patel</strong><span data-i18n="newConsultation">New consultation</span></div>
+          <button class="more" id="patientOptions" aria-label="Patient options" aria-expanded="false" aria-controls="patientMenu"><i data-lucide="ellipsis"></i></button>
+          <div id="patientMenu" class="patient-menu" hidden><button type="button" id="openProfile">Profile &amp; medical history</button><button type="button" data-open-settings>Settings</button></div>
+        </div>
+            <div hidden><button id="languageButton" type="button"></button><span id="languageName"></span><div id="languageMenu"><button data-lang="en-IN" data-name="English"></button><button data-lang="hi-IN" data-name="हिन्दी"></button><button data-lang="mr-IN" data-name="मराठी"></button><button data-lang="ta-IN" data-name="தமிழ்"></button></div><button id="mobileProfile" type="button"></button></div>
           </div>
         </header>
 
@@ -181,18 +179,9 @@
           </div>
         </section>
 
-        <section class="conversation" aria-live="polite">
-          <div class="conversation-actions">
-            <button type="button" id="undoAnswer" class="quick-chip" disabled>Undo last answer</button>
-            <button type="button" id="resetConversation" class="quick-chip">Reset conversation</button>
-            <button type="button" id="newConversation" class="quick-chip">New conversation</button>
-            <button type="button" id="showConversations" class="quick-chip">Saved conversations</button>
-          </div>
-          <section id="savedConversations" class="saved-conversations" hidden aria-label="Saved conversations">
-            <h2>Saved conversations</h2>
-            <p>Reset and New conversation both keep your earlier intake here.</p>
-            <div id="conversationList"></div>
-          </section>
+        <section class="conversation" aria-live="polite" tabindex="0" aria-label="Scrollable patient conversation">
+          <div id="patientClarificationAlert" class="patient-clarification-alert" hidden role="status"><span id="patientClarificationText"></span><button type="button" id="viewPatientClarifications" class="quick-chip">View &amp; answer</button></div>
+          <div id="currentConversationClarifications" class="timeline-item-heading conversation-clarification-context" hidden></div>
           <div class="intro-row">
             <div><p class="eyebrow" data-i18n="letsBegin">Let’s begin</p><h1 data-i18n="pageTitle">Tell me what brings<br/>you in today.</h1></div>
             <div class="time-pill"><i data-lucide="clock-3"></i><span data-i18n="aboutThreeMinutes">About 3 minutes</span></div>
@@ -204,7 +193,8 @@
             <div id="reviewAnswers" class="summary-items"></div>
             <div class="review-actions">
               <button type="button" id="viewConversation" class="quick-chip">View conversation</button>
-              <button type="button" id="startNewIntake" class="quick-chip">Start new intake</button>
+              <button type="button" id="startNewIntake" class="quick-chip" hidden>Start new intake</button>
+              <button type="button" id="undoFromReview" class="quick-chip">Undo last answer</button>
             </div>
           </section>
           <div class="thread" id="thread">
@@ -215,29 +205,57 @@
           </div>
         </section>
 
-        <section class="voice-dock" id="voiceDock">
-          <div class="wave-area" id="waveArea" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
-          <p class="listening-label" id="voiceStatus">Tap the microphone and speak naturally</p>
+        <section class="voice-dock" id="voiceDock" tabindex="0" aria-label="Message and voice controls">
           <div class="quick-replies" id="quickReplies" hidden></div>
-          <button class="mic-button" id="micButton" aria-label="Start voice input"><i data-lucide="mic"></i></button>
-          <div class="or-line"><span></span> <span data-i18n="orType">or type your response</span> <span></span></div>
-          <form class="text-entry" id="textForm"><input id="textInput" type="text" autocomplete="off" placeholder="Type your response here..." /><button aria-label="Send response" type="submit"><i data-lucide="arrow-up"></i></button></form>
-          <p class="mic-permission"><i data-lucide="mic"></i> <span data-i18n="micPrivacy">Your microphone is only used while you are speaking.</span></p>
+          <div class="composer-row"><button type="button" id="undoAnswer" class="composer-undo" aria-label="Undo last answer" title="Undo last answer" disabled><i data-lucide="undo-2" aria-hidden="true"></i></button><form class="text-entry" id="textForm"><input id="textInput" type="text" autocomplete="off" aria-label="Your response" placeholder="Type your response here..." /><button id="micButton" aria-label="Start voice input" type="button"><i data-lucide="mic"></i></button></form></div>
+          <p class="listening-label" id="voiceStatus" role="status">Tap the microphone and speak naturally</p>
+
         </section>
       </section>
 
-      <aside class="summary-panel">
-        <div class="summary-head"><div><p class="eyebrow" data-i18n="yourResponses">Your responses</p><h2 data-i18n="intakeSummary">Intake summary</h2></div><span class="count" id="responseCount">0 of 4</span></div>
-        <div class="summary-progress"><span id="progressBar"></span></div>
-        <div class="empty-summary" id="emptySummary"><div class="empty-icon"><i data-lucide="clipboard-list"></i></div><h3 data-i18n="wereListening">We’re listening</h3><p data-i18n="emptySummary">Your answers will appear here as you go, so you can review them before sharing.</p></div>
-        <div class="summary-items" id="summaryItems"></div>
-        <div class="summary-tip"><i data-lucide="lightbulb"></i><p><b>Take your time.</b><br/>You can pause or correct anything before your visit.</p></div>
-      </aside>
+
     </main>
 
+    <dialog id="chatManager" class="chat-manager" aria-labelledby="chatManagerTitle"><h2 id="chatManagerTitle">Manage conversations</h2><form id="chatManagerForm"><div id="chatManagerFields"></div><p id="chatManagerError" role="status"></p><div class="chat-manager-actions"><button type="button" id="cancelChatManager" class="quick-chip">Cancel</button><button type="submit" id="saveChatManager" class="quick-chip">Save</button></div></form></dialog>
+    <dialog id="patientProfile" class="patient-profile" aria-labelledby="profileHeading">
+      <div class="profile-heading"><div><p class="eyebrow">Your account</p><h2 id="profileHeading">Profile &amp; medical history</h2><p id="profileAccount"></p></div><button type="button" id="closeProfile" class="quick-chip">Close</button></div>
+      <p class="profile-explainer">This profile and timeline are shared across all your conversations. History you enter is labelled patient-reported.</p>
+      <p id="profileStatus" role="status" aria-live="polite"></p>
+      <div id="profileContent" hidden>
+        <form id="profileForm" class="profile-form">
+          <h3>Patient details</h3>
+          <div class="profile-grid">
+            <label>Date of birth<input type="date" name="birthDate" /></label>
+            <label>Sex<select name="sex"><option value="">Not provided</option><option>Female</option><option>Male</option><option>Intersex</option><option>Prefer not to say</option></select></label>
+            <label>Phone<input type="tel" name="phone" maxlength="80" autocomplete="tel" /></label>
+            <label>Blood group<select name="bloodGroup"><option value="">Unknown / not provided</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></label>
+            <label>Known conditions<textarea name="conditions" maxlength="3000" rows="3"></textarea></label>
+            <label>Allergies &amp; reactions<textarea name="allergies" maxlength="3000" rows="3"></textarea></label>
+            <label>Current medications<textarea name="medications" maxlength="3000" rows="3"></textarea></label>
+            <label>Additional notes<textarea name="notes" maxlength="3000" rows="3"></textarea></label>
+          </div>
+          <button type="submit" class="quick-chip quick-chip-send">Save profile</button>
+        </form>
+        <form id="historyForm" class="profile-form">
+          <h3 id="historyFormHeading">Add past history</h3>
+          <div class="profile-grid">
+            <label>Event title<input name="title" required maxlength="200" placeholder="e.g. Knee surgery" /></label>
+            <label>Category<select name="kind"><option value="condition">Condition</option><option value="surgery">Surgery</option><option value="hospitalization">Hospitalization</option><option value="medication">Medication</option><option value="allergy">Allergy</option><option value="vaccination">Vaccination</option><option value="test">Test / report</option><option value="visit">Past visit</option><option value="other">Other</option></select></label>
+            <label>Date (optional)<input name="date" maxlength="10" placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" aria-describedby="historyDateHint" /><small id="historyDateHint">Enter only the date precision you know.</small></label>
+            <label>Details<textarea name="notes" maxlength="3000" rows="3" placeholder="What happened, where, and any relevant details"></textarea></label>
+          </div>
+          <label class="history-attachments">Supporting documents (optional)<input type="file" id="historyAttachments" name="attachments" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.pdf,.docx" /><small>Images, PDF, or DOCX. Up to 10 files per upload, 10 MB each. To add files to an existing event, choose Edit on that entry.</small></label>
+          <p id="selectedHistoryFiles" class="selected-history-files"></p>
+          <button type="submit" id="saveHistory" class="quick-chip quick-chip-send">Add to timeline</button>
+          <button type="button" id="cancelHistory" class="quick-chip" hidden>Cancel edit</button>
+        </form>
+        <section class="profile-form" aria-labelledby="timelineHeading"><h3 id="timelineHeading">Your timeline</h3><p>Includes patient-reported history and saved intake conversations, newest first. Entries without a date appear last.</p><div id="profileTimeline"></div></section>
+      </div>
+    </dialog>
     <div class="doctor-root" id="doctorRoot" hidden></div>
 
     <div class="toast" id="toast" role="status"></div>
     <script type="module" src="/src/auth.js"></script>
+    <script type="module" src="/src/profile.js"></script>
   </body>
 </html>

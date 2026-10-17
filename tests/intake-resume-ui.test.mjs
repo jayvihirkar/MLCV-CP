@@ -22,10 +22,10 @@ test('patient restores transcript, question and draft, then saves and exits', as
   const context = vm.createContext({
     document: { querySelector: query, querySelectorAll: selector => selector === '.steps .step' ? steps : [], addEventListener() {}, createElement: element },
     localStorage: { getItem: key => saved.get(key) || null, setItem: (key, value) => saved.set(key, value), removeItem: key => saved.delete(key) },
-    sessionStorage: { getItem: () => 'token' }, Headers, console, setTimeout: () => 0,
+    sessionStorage: { getItem: () => 'token' }, Headers, FormData, console, setTimeout: () => 0,
     window: { lucide: { createIcons() {} }, confirm: () => context.confirmDelete === true, location: { reload() { context.reloaded = true; } } }, lucide: { createIcons() {} },
     fetch: async (path, options) => {
-      calls.push([path, options?.method || 'GET']);
+      calls.push([path, options?.method || 'GET', options]);
       const data = path.endsWith('/undo') ? { removedAnswer: 'Correct this answer' } : path === '/api/sessions' && options?.method === 'POST' ? { id: 'new-1', locale: 'en-IN' } : path === '/api/sessions' ? [{ id: 'saved-1', title: 'Fever', count: 1, status: 'In progress', createdAt: '2026-10-18T00:00:00Z' }] : path === '/api/health' ? {} : path === '/api/sessions/saved-1' ? {
         id: 'saved-1', locale: 'en-IN', transcript: [{ questionText: 'What is bothering you today?', label: 'Main concern', answer: 'Fever' }],
       } : path.endsWith('/triage') ? {
@@ -35,10 +35,21 @@ test('patient restores transcript, question and draft, then saves and exits', as
       return { ok: path !== '/api/narration', status: 503, json: async () => data };
     },
   });
-  const source = (await readFile(new URL('../src/main.js', import.meta.url), 'utf8')).replace("import './style.css';", '').replace('export function startIntake', 'function startIntake');
+  const source = (await readFile(new URL('../src/main.js', import.meta.url), 'utf8')).replace(/^import .*;\r?$/gm, '').replace(/export (async )?function /g, '$1function ');
   vm.runInContext(source, context);
   await vm.runInContext("currentUser = { id: 'patient-1', name: 'Test Patient' }; initialise()", context);
   assert.equal(query('#textInput').value, 'Two days');
+  assert.equal(query('#micButton').type, 'submit');
+  assert.equal(query('#micButton')['aria-label'], 'Send response');
+  query('#textInput').value = '   ';
+  query('#textInput').listeners.input();
+  assert.equal(query('#micButton').type, 'button');
+  assert.equal(query('#micButton')['aria-label'], 'Start voice input');
+  vm.runInContext('setRecording(true)', context);
+  assert.equal(query('#micButton')['aria-label'], 'Stop recording');
+  vm.runInContext('setRecording(false)', context);
+  query('#textInput').value = 'Two days';
+  query('#textInput').listeners.input();
   assert.equal(vm.runInContext('currentQuestion.id', context), 'duration');
   assert.ok(query('#thread').appended.some(node => node.querySelector('p').textContent === 'Fever'));
   const restoredQuestion = query('#thread').appended.find(node => node.querySelector('p').textContent === 'What is bothering you today?');
@@ -53,13 +64,10 @@ test('patient restores transcript, question and draft, then saves and exits', as
   vm.runInContext("addAssistantMessage('A voice follow-up?')", context);
   assert.ok(calls.some(([path]) => path === '/api/narration'), 'Voice follow-ups speak after microphone opt-in');
   query('#textInput').value = 'Three days';
-  await query('.end-button').listeners.click();
+  assert.equal(await vm.runInContext('saveBeforeSignOut()', context), true);
   assert.equal(JSON.parse(saved.get('meditrace.intake.patient-1')).draft, 'Three days');
-  assert.equal(query('#signOutButton').clicked, true);
-  query('#signOutButton').clicked = false;
   vm.runInContext('submitting = true', context);
-  await query('.end-button').listeners.click();
-  assert.equal(query('#signOutButton').clicked, false);
+  assert.equal(await vm.runInContext('saveBeforeSignOut()', context), false);
   vm.runInContext("renderTriage({ step: 3, answered: [], question: { text: 'Any allergies?', kind: 'text' } })", context);
   assert.equal(steps[1].className, 'step complete');
   assert.equal(steps[2]['aria-current'], 'step');
@@ -81,14 +89,17 @@ test('patient restores transcript, question and draft, then saves and exits', as
   await query('#undoAnswer').listeners.click();
   assert.equal(context.reloaded, true);
   assert.equal(JSON.parse(saved.get('meditrace.intake.patient-1')).draft, 'Correct this answer');
-  await query('#showConversations').listeners.click();
-  assert.ok(query('#conversationList').innerHTML.includes('Fever'));
-  assert.ok(query('#conversationList').innerHTML.includes('saved-1'));
-  const deleteButton = { dataset: { deleteSession: 'saved-1' }, disabled: false };
-  const deleteEvent = { target: { closest: selector => selector === '[data-delete-session]' ? deleteButton : null } };
-  await query('#conversationList').listeners.click(deleteEvent);
-  assert.ok(!calls.some(([, method]) => method === 'DELETE'), 'Cancel must preserve the conversation');
-  context.confirmDelete = true;
-  await query('#conversationList').listeners.click(deleteEvent);
-  assert.ok(calls.some(([url, method]) => url === '/api/sessions/saved-1' && method === 'DELETE'));
+  for (const [path, body] of [
+    ['/api/conversations/groups', { name: 'Health records' }],
+    ['/api/conversations/groups/group-1', { name: 'Appointments' }],
+    ['/api/conversations/saved-1', { groupId: 'group-1' }],
+  ]) {
+    context.requestPath = path;
+    context.requestBody = JSON.stringify(body);
+    await vm.runInContext("api(requestPath, { method: 'POST', body: requestBody })", context);
+    assert.equal(calls.at(-1)[2].headers.get('Content-Type'), 'application/json');
+    assert.deepEqual(JSON.parse(calls.at(-1)[2].body), body);
+  }
+  await vm.runInContext("api('/api/transcribe', { method: 'POST', body: new FormData() })", context);
+  assert.equal(calls.at(-1)[2].headers.has('Content-Type'), false, 'Uploads must let the browser supply the multipart boundary');
 });

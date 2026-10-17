@@ -4,3 +4,8 @@ dist/
 data/intakes.json
 data/users.json
 data/reviews.json
+data/profiles.json
+data/profiles.json.tmp
+data/attachments/
+data/chat-settings.json
+data/chat-settings.json.tmp

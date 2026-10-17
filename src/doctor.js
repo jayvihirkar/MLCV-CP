@@ -1,4 +1,6 @@
 import './doctor.css';
+import { attachmentList } from './attachments.js';
+import { clarificationLauncher } from './clarifications.js';
 
 /* ------------------------------------------------------------------------- */
 /* MediTrace clinician workspace                                              */
@@ -21,6 +23,10 @@ const state = {
   expandedAi: {},
   evidenceId: null,
   modal: null,
+  clarificationThreadId: null,
+  clarificationTarget: null,
+  decisionBusy: false,
+  reviewSaving: false,
 };
 
 let appRoot = null;
@@ -88,7 +94,6 @@ function shellMarkup() {
     ['dashboard', 'layout-dashboard', 'Overview'],
     ['queue', 'list-checks', 'Patient queue'],
     ['reviews', 'check-check', 'Reviewed & completed'],
-    ['documents', 'folder-open', 'Documents & reports'],
     ['profile', 'settings', 'Profile & settings'],
   ];
   return `
@@ -102,7 +107,7 @@ function shellMarkup() {
         <nav class="dc-nav">
           <p class="dc-nav-label">Workspace</p>
           ${nav.map(([view, ico, label]) => `
-            <button type="button" data-act="nav" data-view="${view}" data-nav="${view}">
+            <button type="button" data-act="nav" data-view="${view}" data-nav="${view}" aria-label="${esc(label)}" title="${esc(label)}">
               ${icon(ico)}<span>${label}</span><span class="dc-nav-count" data-count="${view}" hidden></span>
             </button>`).join('')}
         </nav>
@@ -117,7 +122,7 @@ function shellMarkup() {
       </aside>
       <div class="dc-main">
         <header class="dc-topbar" id="dcTopbar"></header>
-        <div class="dc-view" id="dcView"></div>
+        <div class="dc-view" id="dcView" tabindex="0" aria-label="Scrollable clinician workspace"></div>
       </div>
     </div>
     <div class="dc-overlay" id="dcOverlay"></div>
@@ -135,6 +140,7 @@ function renderTopbar() {
       <p>${esc(subtitle)}</p>
     </div>
     <div class="dc-topbar-spacer"></div>
+    <button type="button" class="dc-btn ghost sm" data-act="refresh-data">${icon('refresh-cw')}Refresh data</button>
     <span class="dc-chip-date">${icon('calendar-days')}<span>${esc(fmtDate(new Date().toISOString()))}</span></span>`;
 }
 
@@ -207,16 +213,22 @@ function renderOverlay() {
       </div>`;
   }
   if (state.modal === 'clarify') {
+    const thread = (state.selected?.clarifications || []).find(item => item.id === state.clarificationThreadId);
+    const target = thread?.target || state.clarificationTarget;
+    const targets = [...(state.selected?.clarificationTargets || [])];
+    if (target && !targets.some(item => item.type === target.type && item.id === target.id)) targets.unshift(target);
     html += `
       <div class="dc-modal-scrim" data-act="cancel-modal">
         <div class="dc-modal" role="dialog" aria-modal="true" aria-label="Request clarification" data-modal-card>
           <div class="dc-modal-head">
             <h3>Request clarification</h3>
-            <p>Mark the summary as needing clarification and record the question you want followed up.</p>
+            <p>Your question will appear beside the selected item in the patient's account timeline.</p>
           </div>
           <div class="dc-modal-body">
-            <label class="dc-muted" style="font-size:.78rem">Question for follow-up</label>
-            <textarea class="dc-note-field" data-role="clarify-note" placeholder="e.g. Confirm whether Glimepiride is still being taken.">${esc(state.selected?.review?.note || '')}</textarea>
+            <label class="dc-muted" style="font-size:.78rem">Related timeline item</label>
+            <select class="dc-clarify-target" data-role="clarify-target" ${thread ? 'disabled' : ''}>${targets.map(item => `<option value="${esc(item.type)}:${esc(item.id)}" ${target?.type === item.type && target?.id === item.id ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}</select>
+            <label class="dc-muted" style="font-size:.78rem">${thread ? 'Follow-up question' : 'Question for the patient'}</label>
+            <textarea class="dc-note-field" data-role="clarify-note" maxlength="2000" placeholder="e.g. Confirm whether Glimepiride is still being taken."></textarea>
           </div>
           <div class="dc-modal-foot">
             <button type="button" class="dc-btn ghost" data-act="cancel-modal">Cancel</button>
@@ -344,7 +356,7 @@ function queueRow(item) {
       </span>
       <span class="dc-row-reason">${esc(item.reason || 'Not provided')}</span>
       <span class="dc-row-time">${esc(fmtTime(item.appointment))}</span>
-      <span class="dc-row-badges">${badge(status)}</span>
+      <span class="dc-row-badges">${badge(status)}${item.clarificationAnswered ? badge([`${item.clarificationAnswered} clarification answered`, 'info']) : item.clarificationPending ? badge(['Waiting for patient', 'warn']) : ''}</span>
       <span class="dc-row-badges dc-row-priority">${badge(PRIORITY_META[item.priority] || PRIORITY_META.medium)}</span>
       <span class="dc-row-go">${icon('chevron-right')}</span>
     </button>`;
@@ -465,11 +477,12 @@ function overviewCard(patient) {
   const o = patient.overview || {};
   const list = (arr, render) => (arr && arr.length ? arr.map(render).join('') : '<span class="dc-not-provided">Not provided</span>');
   return `
-    <div class="dc-card">
-      <div class="dc-card-head"><h2>Patient overview</h2></div>
+    <details class="dc-card dc-card-details" open>
+      <summary class="dc-card-head"><h2>Patient overview</h2></summary>
       <div class="dc-card-body">
         <dl class="dc-dl">
-          <div><dt>Age & sex</dt><dd>${patient.age ? `${esc(patient.age)} · ${esc(patient.sex || 'Not provided')}` : '<span class="dc-not-provided">Not provided</span>'}</dd></div>
+          <div><dt>Age & sex</dt><dd>${patient.age != null ? `${esc(patient.age)} · ` : ''}${esc(patient.sex || 'Not provided')}</dd></div>
+          ${patient.accountProfile ? `<div><dt>Date of birth</dt><dd>${esc(patient.accountProfile.birthDate || 'Not provided')}</dd></div><div><dt>Blood group</dt><dd>${esc(patient.accountProfile.bloodGroup || 'Not provided')}</dd></div>` : ''}
           <div><dt>Location</dt><dd>${patient.city ? esc(patient.city) : '<span class="dc-not-provided">Not provided</span>'}</dd></div>
           <div><dt>Preferred language</dt><dd>${esc(patient.language || 'Not provided')}</dd></div>
           <div><dt>Contact</dt><dd>${patient.phone ? esc(patient.phone) : '<span class="dc-not-provided">Not provided</span>'}</dd></div>
@@ -482,12 +495,13 @@ function overviewCard(patient) {
         </div>
         <div style="margin-top:18px" class="dc-dl">
           <div><dt>Allergies</dt><dd>${list(o.allergies, (a) => `${esc(a.name)} <span class="dc-muted">(${esc(a.reaction)})</span>`)}</dd></div>
-          <div><dt>Conditions</dt><dd>${list(o.conditions, (c) => `${esc(c.name)} <span class="dc-muted">since ${esc(c.since)}</span>`)}</dd></div>
+          <div><dt>Conditions</dt><dd>${list(o.conditions, (c) => `${esc(c.name)}${c.since ? ` <span class="dc-muted">since ${esc(c.since)}</span>` : ''}${c.source ? ` <span class="dc-muted">(${esc(c.source)})</span>` : ''}`)}</dd></div>
           <div><dt>Current medications</dt><dd>${list(o.medications, (m) => `${esc(m.name)} ${esc(m.dose)} <span class="dc-muted">· ${esc(m.frequency)}</span>`)}</dd></div>
           <div><dt>Notes</dt><dd>${o.notes ? esc(o.notes) : '<span class="dc-not-provided">Not provided</span>'}</dd></div>
         </div>
+        ${patient.accountProfile ? `<p class="dc-review-note">Account profile is patient-reported and shared across this patient's conversations.${patient.accountProfile.updatedAt ? ` Last updated ${esc(fmtDateTime(patient.accountProfile.updatedAt))}.` : ' No profile details saved yet.'}</p>` : ''}
       </div>
-    </div>`;
+    </details>`;
 }
 
 function summaryCard(patient) {
@@ -507,7 +521,7 @@ function summaryCard(patient) {
           <h3>${esc(section.title)}</h3>
           ${tag}
           <span class="dc-spacer"></span>
-          <button type="button" class="dc-btn ${reviewed ? 'teal-soft' : 'ghost'} sm" data-act="toggle-reviewed" data-sec="${esc(section.id)}">${icon(reviewed ? 'check' : 'circle')}${reviewed ? 'Reviewed' : 'Mark reviewed'}</button>
+          <button type="button" class="dc-btn ${reviewed ? 'teal-soft' : 'ghost'} sm" data-act="toggle-reviewed" aria-pressed="${reviewed}" data-sec="${esc(section.id)}">${icon(reviewed ? 'check' : 'circle')}${reviewed ? 'Reviewed' : 'Mark reviewed'}</button>
         </div>
         <textarea class="dc-sec-edit${edited ? ' edited' : ''}" data-sec="${esc(section.id)}" spellcheck="false">${esc(value)}</textarea>
         <div class="dc-sec-actions">
@@ -519,30 +533,32 @@ function summaryCard(patient) {
       </div>`;
   }).join('');
   return `
-    <div class="dc-card">
-      <div class="dc-card-head">
+    <details class="dc-card dc-card-details">
+      <summary class="dc-card-head">
         <h2>Clinical summary</h2>
         <span class="dc-card-sub">${esc(patient.summary?.model || 'AI draft')} · generated ${esc(relTime(patient.summary?.generatedAt))}</span>
-      </div>
+      </summary>
       <div>${body || emptyState('file-question', 'No summary sections', 'This intake did not produce summary sections.')}</div>
-    </div>`;
+    </details>`;
 }
 
 function timelineCard(patient) {
   const items = patient.timeline || [];
   return `
-    <div class="dc-card">
-      <div class="dc-card-head"><h2>Medical timeline</h2><span class="dc-card-sub">${esc(items.length)} event${items.length === 1 ? '' : 's'}</span></div>
+    <details class="dc-card dc-card-details">
+      <summary class="dc-card-head"><h2>Medical timeline</h2><span class="dc-card-sub">${esc(items.length)} event${items.length === 1 ? '' : 's'}</span></summary>
       <div class="dc-card-body">
         ${items.length ? `<ul class="dc-timeline">${items.map((event) => `
           <li>
-            <span class="dc-tl-date">${esc(fmtDate(event.date))}</span>
-            <p class="dc-tl-title">${esc(event.title)}</p>
+            <span class="dc-tl-date">${esc(event.date && /^\d{4}(-\d{2})?$/.test(event.date) ? event.date : fmtDate(event.date))}</span>
+            <div class="timeline-item-heading"><p class="dc-tl-title">${esc(event.title)}</p><div class="dc-timeline-clarifications" data-target-type="${esc(event.clarificationTarget?.type || '')}" data-target-id="${esc(event.clarificationTarget?.id || '')}">${clarificationLauncher(event.clarifications)}</div></div>
             <p class="dc-tl-detail">${esc(event.detail)}</p>
+            ${attachmentList(event.attachments)}
+            ${patient.accountLinked && event.clarificationTarget ? `<button type="button" class="dc-src-link" data-act="clarify-item" data-target-type="${esc(event.clarificationTarget.type)}" data-target-id="${esc(event.clarificationTarget.id)}">Ask about this item</button>` : ''}
             <span class="dc-tl-src">${icon('link')} ${esc(event.sourceLabel || 'Source')}${event.evidenceId ? ` · <button type="button" class="dc-src-link" style="padding:0;border:0;background:none" data-act="evidence" data-ev="${esc(event.evidenceId)}">view</button>` : ''}</span>
           </li>`).join('')}</ul>` : '<p class="dc-not-provided">No timeline events recorded.</p>'}
       </div>
-    </div>`;
+    </details>`;
 }
 
 function documentsCard(patient) {
@@ -556,6 +572,7 @@ function documentsCard(patient) {
             <span class="dc-doc-ico">${icon('file-text')}</span>
             <div><b>${esc(doc.name)}</b><small>${esc(doc.type || 'Document')} · uploaded ${esc(fmtDate(doc.uploadedAt))} · ${esc(doc.source || '')}</small></div>
             <span class="dc-doc-tag">${doc.demo ? badge(['Demo', 'warn']) : badge(['Recorded', 'ok'])}</span>
+            ${doc.mimeType ? `<button type="button" class="attachment-button" data-download-attachment="${esc(doc.id)}" data-attachment-name="${esc(doc.name)}">Download</button>` : ''}
           </div>`).join('') : '<p class="dc-not-provided">No documents uploaded with this intake.</p>'}
       </div>
     </div>`;
@@ -568,6 +585,8 @@ function reviewPanel(patient) {
     ? ['Summary approved', 'ok', 'circle-check']
     : decision === 'clarification_requested'
       ? ['Clarification requested', 'warn', 'message-circle-question']
+      : decision === 'clarification_answered'
+        ? ['Patient answered · review clarification', 'info', 'message-circle-check']
       : decision === 'draft'
         ? ['Draft saved', 'warn', 'pencil-line']
         : ['Not reviewed yet', 'warn', 'clock'];
@@ -584,10 +603,10 @@ function reviewPanel(patient) {
         <div class="dc-review-actions">
           <button type="button" class="dc-btn ghost" data-act="save-draft">${icon('save')}Save draft</button>
           <button type="button" class="dc-btn primary" data-act="approve-ask"${reviewed === 0 && sections.length ? '' : ''}>${icon('check')}Approve summary</button>
-          <button type="button" class="dc-btn warn" data-act="clarify-ask">${icon('message-circle-question')}Request clarification</button>
+          <button type="button" class="dc-btn warn" data-act="clarify-ask" ${patient.accountLinked ? '' : 'disabled title="Requires an account-linked recorded intake"'}>${icon('message-circle-question')}Request clarification</button>
           <button type="button" class="dc-btn ghost" disabled title="Hospital export is not configured in this prototype">${icon('upload')}Export to HIS (not connected)</button>
         </div>
-        <div class="dc-mini-meta"><span>${esc(reviewed)} of ${esc(sections.length)} sections reviewed</span><span>${esc(review.updatedAt ? `updated ${relTime(review.updatedAt)}` : 'no changes yet')}</span></div>
+        <div class="dc-mini-meta"><span data-review-count>${esc(reviewed)} of ${esc(sections.length)} sections reviewed</span><span>${esc(review.updatedAt ? `updated ${relTime(review.updatedAt)}` : 'no changes yet')}</span></div>
       </div>
     </div>`;
 }
@@ -628,6 +647,24 @@ function clarificationCard(patient) {
       </div>
     </div>`;
 }
+
+let clarificationPollBusy = false;
+async function pollDoctorClarifications() {
+  if (document.hidden || clarificationPollBusy || state.view !== 'patient' || !state.selected?.accountLinked) return;
+  const id = state.selected.id;
+  clarificationPollBusy = true;
+  try {
+    const data = await api(`/api/doctor/patients/${encodeURIComponent(id)}/clarifications`);
+    if (state.selected?.id !== id) return;
+    if (JSON.stringify(state.selected.clarifications || []) === JSON.stringify(data.threads)) return;
+    state.selected.clarifications = data.threads;
+    appRoot.querySelectorAll('.dc-timeline-clarifications').forEach(host => {
+      host.innerHTML = clarificationLauncher(data.threads.filter(thread => thread.target.type === host.dataset.targetType && thread.target.id === host.dataset.targetId));
+    });
+  } catch { /* Retain existing messages when temporarily offline. */ }
+  finally { clarificationPollBusy = false; }
+}
+setInterval(pollDoctorClarifications, 15000);
 
 function patientViewHtml() {
   const patient = state.selected;
@@ -761,6 +798,7 @@ async function openPatient(id) {
 }
 
 async function saveDraft() {
+  if (state.reviewSaving) { notify('Please wait for the section review to finish saving.'); return; }
   if (!state.selected) return;
   const note = appRoot.querySelector('[data-role="review-note"]')?.value || '';
   try {
@@ -772,22 +810,68 @@ async function saveDraft() {
 }
 
 async function submitDecision(action, note) {
-  if (!state.selected) return;
+  if (!state.selected || state.decisionBusy || state.reviewSaving) return;
+  state.decisionBusy = true;
+  const patientId = state.selected.id;
   try {
-    const { review } = await api(`/api/doctor/patients/${encodeURIComponent(state.selected.id)}/decision`, { method: 'POST', body: JSON.stringify({ action, note }) });
+    const selectedTarget = appRoot.querySelector('[data-role="clarify-target"]')?.value;
+    const [type, id] = (selectedTarget || '').split(':');
+    const { review } = await api(`/api/doctor/patients/${encodeURIComponent(patientId)}/decision`, { method: 'POST', body: JSON.stringify({ action, note, ...(action === 'clarification' ? { threadId: state.clarificationThreadId || undefined, target: type && id ? { type, id } : undefined } : {}) }) });
     applyReview(review);
     state.modal = null;
-    renderAll();
+    await openPatient(patientId);
     notify(action === 'approve' ? 'Summary approved' : action === 'clarification' ? 'Clarification requested' : 'Draft saved');
     if (action !== 'draft') refresh();
   } catch (error) { notify(error.message, 'error'); }
+  finally { state.decisionBusy = false; }
 }
 
 /* ---- events -------------------------------------------------------------- */
 
 function switchView(view) { state.view = view; state.error = null; state.evidenceId = null; state.modal = null; renderAll(); }
 
+async function saveReviewedSection(button) {
+  if (!state.selected || state.reviewSaving || state.decisionBusy) return;
+  const patientId = state.selected.id;
+  const block = button.closest('[data-sec-block]');
+  const wasApproved = state.selected.review?.decision === 'approved';
+  const section = collectSections().find(item => item.id === button.dataset.sec);
+  if (!section) return;
+  const reviewed = block.dataset.reviewed !== 'true';
+  section.status = reviewed ? 'reviewed' : 'pending';
+  state.reviewSaving = true;
+  button.disabled = true;
+  const oldLabel = button.innerHTML;
+  button.textContent = 'Saving…';
+  try {
+    const { review } = await api(`/api/doctor/patients/${encodeURIComponent(patientId)}/summary`, { method: 'PUT', body: JSON.stringify({ sections: [section] }) });
+    if (state.selected?.id !== patientId) return;
+    applyReview(review);
+    if (wasApproved && review.decision !== 'approved') {
+      const status = appRoot.querySelector('.dc-review-status');
+      if (status) { status.className = 'dc-review-status'; status.innerHTML = `${icon('pencil-line')}<span>Draft · section review updated</span>`; }
+      appRoot.querySelectorAll('[data-sec-block]').forEach(sectionBlock => {
+        const tag = sectionBlock.querySelector('.dc-section-top .dc-badge');
+        const edited = sectionBlock.querySelector('.dc-sec-edit').value.trim() !== (bodies[sectionBlock.dataset.secBlock] || '').trim();
+        if (tag) { tag.className = `dc-badge tone-${edited ? 'info' : 'muted'}`; tag.textContent = edited ? 'Edited' : 'AI draft'; }
+      });
+    }
+    block.dataset.reviewed = String(reviewed);
+    button.className = `dc-btn ${reviewed ? 'teal-soft' : 'ghost'} sm`;
+    button.innerHTML = `${icon(reviewed ? 'check' : 'circle')}${reviewed ? 'Reviewed' : 'Mark reviewed'}`;
+    button.setAttribute('aria-pressed', String(reviewed));
+    const count = appRoot.querySelector('[data-review-count]');
+    if (count) count.textContent = `${state.selected.summary.sections.filter(item => item.review.status === 'reviewed').length} of ${state.selected.summary.sections.length} sections reviewed`;
+    notify(reviewed ? 'Section marked reviewed and saved' : 'Section marked pending and saved');
+    icons();
+  } catch (error) { button.innerHTML = oldLabel; notify(error.message, 'error'); }
+  finally { button.disabled = false; state.reviewSaving = false; }
+}
+
 function bind(root) {
+  root.addEventListener('toggle', event => {
+    if (event.target.matches('.dc-card-details') && event.target.open) autosizeAll();
+  }, true);
   root.addEventListener('click', (event) => {
     const modalCard = event.target.closest('[data-modal-card]');
     const action = event.target.closest('[data-act]');
@@ -795,6 +879,15 @@ function bind(root) {
     if (modalCard && !modalCard.contains(action)) return;
     const act = action.dataset.act;
     switch (act) {
+      case 'refresh-data': {
+        const changed = state.view === 'patient' && state.selected && collectSections().some(section => {
+          const saved = state.selected.summary.sections.find(item => item.id === section.id)?.review;
+          return section.doctorText !== (saved?.doctorText ?? null) || section.status !== (saved?.status || 'pending');
+        });
+        if (changed && !window.confirm('Discard unsaved review edits and load the latest patient data?')) break;
+        if (state.view === 'patient' && state.lastPatientId) openPatient(state.lastPatientId); else refresh();
+        break;
+      }
       case 'nav': switchView(action.dataset.view); break;
       case 'open': openPatient(action.dataset.id); break;
       case 'back': switchView('queue'); break;
@@ -802,12 +895,7 @@ function bind(root) {
       case 'retry-patient': if (state.view === 'patient' && state.lastPatientId) openPatient(state.lastPatientId); else refresh(); break;
       case 'signout': if (state.onSignOut) state.onSignOut(); break;
       case 'toggle-reviewed': {
-        const block = action.closest('[data-sec-block]');
-        const now = block.dataset.reviewed !== 'true';
-        block.dataset.reviewed = String(now);
-        action.className = `dc-btn ${now ? 'teal-soft' : 'ghost'} sm`;
-        action.innerHTML = `${icon(now ? 'check' : 'circle')}${now ? 'Reviewed' : 'Mark reviewed'}`;
-        icons();
+        saveReviewedSection(action);
         break;
       }
       case 'toggle-ai': {
@@ -819,7 +907,15 @@ function bind(root) {
       case 'close-evidence': state.evidenceId = null; renderOverlay(); break;
       case 'save-draft': saveDraft(); break;
       case 'approve-ask': state.modal = 'approve'; renderOverlay(); break;
-      case 'clarify-ask': state.modal = 'clarify'; renderOverlay(); break;
+      case 'clarify-ask': state.clarificationThreadId = null; state.clarificationTarget = null; state.modal = 'clarify'; renderOverlay(); break;
+      case 'clarify-item': state.clarificationThreadId = null; state.clarificationTarget = { type: action.dataset.targetType, id: action.dataset.targetId, label: 'Timeline item' }; state.modal = 'clarify'; renderOverlay(); break;
+      case 'clarify-followup': state.clarificationThreadId = action.dataset.threadId; state.clarificationTarget = null; state.modal = 'clarify'; renderOverlay(); break;
+      case 'approve-clarification': {
+        if (state.decisionBusy) break;
+        state.decisionBusy = true;
+        api(`/api/doctor/patients/${encodeURIComponent(state.selected.id)}/clarifications/${encodeURIComponent(action.dataset.threadId)}/approve`, { method: 'POST' }).then(() => pollDoctorClarifications()).then(() => notify('Clarification approved')).catch(error => notify(error.message, 'error')).finally(() => { state.decisionBusy = false; });
+        break;
+      }
       case 'cancel-modal': state.modal = null; renderOverlay(); break;
       case 'confirm-approve': submitDecision('approve', appRoot.querySelector('[data-role="approve-note"]')?.value || ''); break;
       case 'confirm-clarify': submitDecision('clarification', appRoot.querySelector('[data-role="clarify-note"]')?.value || ''); break;

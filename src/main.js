@@ -1,4 +1,6 @@
 import './style.css';
+import { createConversationSidebar } from './conversations.js';
+import './patient-layout.css';
 
 const ui = {
   en: { newConsultation: 'New consultation', todaysIntake: 'Today’s intake', welcome: 'Welcome', completed: 'Completed', currentConcern: 'Current concern', inProgress: 'In progress', healthHistory: 'Health history', upNext: 'Up next', review: 'Review', privateByDesign: 'Private by design', privacyText: 'Your answers are saved to your local intake session and shown in your summary for review.', saveLater: 'End & save later', voiceIntake: 'Voice-assisted intake', stepOfFour: 'Step 2 of 4', letsBegin: 'Let’s begin', pageTitle: 'Tell me what brings<br/>you in today.', aboutThreeMinutes: 'About 3 minutes', orType: 'or type your response', micPrivacy: 'Your microphone is only used while you are speaking.', yourResponses: 'Your responses', intakeSummary: 'Intake summary', wereListening: 'We’re listening', emptySummary: 'Your answers will appear here as you go, so you can review them before sharing.', tapToSpeak: 'Tap the microphone and speak naturally', recording: 'Recording your response… tap again to stop', transcribing: 'Transcribing your response…', fallbackNarration: 'ElevenLabs is not configured yet. Add your API key to .env; the prompt text is still shown.', voiceError: 'We could not transcribe that audio. Please try again or type your response.', ready: 'Your responses are ready to review', completeReply: 'Thank you. I have recorded your responses. Please review them in the panel before sharing.', greeting: 'Hello Ramesh. I’ll help your care team understand how you’re feeling.', chooseOne: 'Please choose at least one option.', sendSelection: 'Send selection', typePlaceholder: 'Type your response here...' },
@@ -16,6 +18,8 @@ let transcribing = false;
 // Voice is opt-in for each page visit, including restored intakes.
 let voiceEnabled = false;
 let intakeStep = 2;
+let conversationSidebar = null;
+let submittedAnswerCount = 0;
 function renderSteps(step = intakeStep) {
   intakeStep = step;
   document.querySelectorAll('.steps .step').forEach((element, index) => {
@@ -30,10 +34,16 @@ function renderSteps(step = intakeStep) {
   if (window.lucide) lucide.createIcons();
 }
 const savedIntakeKey = () => `meditrace.intake.${currentUser.id}`;
+let announcedSessionId = null;
 function rememberIntake() {
+  updateComposerAction();
   if (session && currentUser) {
     localStorage.setItem(savedIntakeKey(), JSON.stringify({ id: session.id, draft: textInput.value }));
     localStorage.setItem(`${savedIntakeKey()}.${session.id}.draft`, textInput.value);
+    if (announcedSessionId !== session.id) {
+      announcedSessionId = session.id;
+      if (typeof window.dispatchEvent === 'function') window.dispatchEvent(new CustomEvent('intake-session-changed'));
+    }
   }
 }
 let mediaRecorder;
@@ -62,20 +72,26 @@ const icon = (name) => `<i data-lucide="${name}"></i>`;
 const strings = () => ui[locale] || ui.en;
 
 function authToken() { return sessionStorage.getItem('meditrace.token') || localStorage.getItem('meditrace.token') || ''; }
-async function api(url, options = {}) { const headers = new Headers(options.headers || {}); const token = authToken(); if (token) headers.set('Authorization', `Bearer ${token}`); const response = await fetch(url, { ...options, headers }); if (!response.ok) { const payload = await response.json().catch(() => ({})); const error = new Error(payload.error || 'Request failed.'); error.status = response.status; throw error; } return response; }
+async function api(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (typeof options.body === 'string' && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  const token = authToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const response = await fetch(url, { ...options, headers });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const error = new Error(payload.error || 'Request failed.');
+    error.status = response.status;
+    throw error;
+  }
+  return response;
+}
 const nameTokens = ['Ramesh', 'रमेश', 'ரமேஷ்'];
 function firstName() { return ((currentUser && currentUser.name) || 'Ramesh Patel').trim().split(/\s+/)[0]; }
 function patientInitials() { const parts = ((currentUser && currentUser.name) || 'Ramesh Patel').trim().split(/\s+/); return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || 'MT'; }
 function withName(text) { return nameTokens.reduce((value, token) => value.split(token).join(firstName()), text); }
 function showToast(message) { toast.textContent = message; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 4200); }
 function escapeHtml(value) { return String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char])); }
-
-function renderSummaryItems(items) {
-  const list = Array.isArray(items) ? items : [];
-  const empty = $('#emptySummary');
-  if (empty) empty.style.display = list.length ? 'none' : 'flex';
-  $('#summaryItems').innerHTML = list.map((item, index) => `<article class="summary-item"><span>${index + 1}</span><div><small>${escapeHtml(item.label)}</small><p>${escapeHtml(item.answer)}</p></div></article>`).join('');
-}
 
 function applyTranslations() {
   document.querySelectorAll('[data-i18n]').forEach((element) => { element.innerHTML = strings()[element.dataset.i18n]; });
@@ -184,19 +200,13 @@ function renderQuestion(question, { append = true } = {}) {
 }
 
 function renderTriage(payload) {
+  submittedAnswerCount = (payload.answered || []).length;
   $('#undoAnswer').disabled = !(payload.answered || []).length;
+  $('#undoFromReview').disabled = !(payload.answered || []).length;
   $('#intakeReview').hidden = true;
   thread.hidden = false;
   voiceDock.hidden = false;
   renderSteps(payload.escalated ? intakeStep : payload.step || (payload.complete ? 4 : payload.question?.phase === 'history' ? 3 : 2));
-  renderSummaryItems(payload.answered);
-  const answeredCount = (payload.answered || []).length;
-  const remaining = typeof payload.remaining === 'number' ? payload.remaining : 0;
-  const total = answeredCount + remaining;
-  const counter = $('#responseCount');
-  if (counter) counter.textContent = total > answeredCount ? `${answeredCount} of ~${total}` : `${answeredCount} answered`;
-  const bar = $('#progressBar');
-  if (bar) bar.style.width = `${total ? Math.min(96, (answeredCount / total) * 100) : 4}%`;
 
   if (payload.escalated) { showEscalation(payload); return; }
   if (escalationBanner) escalationBanner.hidden = true;
@@ -221,8 +231,6 @@ function showEscalation(payload) {
   voiceStatus.textContent = 'Please seek urgent care as advised above.';
   const reasons = (info.reasons || []).join('; ');
   addAssistantMessage([headline + '.', reasons ? `Reported: ${reasons}.` : '', info.advice || ''].filter(Boolean).join(' '));
-  const progressBar = $('#progressBar');
-  if (progressBar) progressBar.style.width = '100%';
   escalationBanner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -241,7 +249,6 @@ function finishIntake(answers = []) {
   thread.hidden = true;
   voiceDock.hidden = true;
   $('.intro-row').hidden = true;
-  $('#progressBar').style.width = '100%';
   $('#intakeReview').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -261,23 +268,33 @@ async function sendAnswer(raw) {
     const payload = await response.json();
     rememberIntake();
     renderTriage(payload);
+    await conversationSidebar?.refresh();
   } catch (error) {
     showToast(error.message);
     textInput.value = answer;
+    $('#undoAnswer').disabled = submittedAnswerCount === 0;
     rememberIntake();
     textInput.disabled = false;
     micButton.disabled = false;
     renderChips(question);
   } finally {
     submitting = false;
+    updateComposerAction();
   }
 }
 
+function updateComposerAction() {
+  const sending = Boolean(textInput.value.trim()) && !isRecording;
+  micButton.type = sending ? 'submit' : 'button';
+  micButton.setAttribute('aria-label', isRecording ? 'Stop recording' : sending ? 'Send response' : 'Start voice input');
+  micButton.innerHTML = icon(isRecording ? 'square' : sending ? 'arrow-up' : 'mic');
+  if (window.lucide) lucide.createIcons();
+}
 function setRecording(value) {
   isRecording = value;
   voiceDock.classList.toggle('is-listening', value);
   micButton.classList.toggle('recording', value);
-  micButton.innerHTML = icon(value ? 'square' : 'mic');
+  updateComposerAction();
   voiceStatus.textContent = value ? strings().recording : strings().tapToSpeak;
   lucide.createIcons();
 }
@@ -390,6 +407,8 @@ async function initialise() {
         }
         await loadTriage();
         if (!textInput.disabled) textInput.value = saved.draft || '';
+        updateComposerAction();
+        await conversationSidebar?.refresh();
         showToast('Your saved intake has been restored.');
         return;
       } catch (error) {
@@ -401,12 +420,13 @@ async function initialise() {
     session = await created.json();
     rememberIntake();
     await loadTriage();
+    await conversationSidebar?.refresh();
   } catch (error) {
     showToast(`Could not start intake: ${error.message}`);
   }
 }
 
-micButton.addEventListener('click', toggleRecording);
+micButton.addEventListener('click', () => { if (isRecording || !textInput.value.trim()) toggleRecording(); });
 function conversationBusy() {
   if (submitting || transcribing || isRecording) { showToast('Please finish your current response first.'); return true; }
   return false;
@@ -425,58 +445,19 @@ $('#undoAnswer').addEventListener('click', async () => {
   } catch (error) { showToast(error.message); button.disabled = false; }
   finally { submitting = false; }
 });
-async function loadConversations() {
-  $('#conversationList').textContent = 'Loading…';
-  try {
-    const response = await api('/api/sessions');
-    const conversations = await response.json();
-    $('#conversationList').innerHTML = conversations.length ? conversations.map((item) => `<div class="saved-conversation-row"><button type="button" class="saved-conversation" data-session="${escapeHtml(item.id)}" ${item.id === session?.id ? 'disabled' : ''}><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.status)} · ${item.count} answers · ${escapeHtml(new Date(item.createdAt).toLocaleString())}${item.id === session?.id ? ' · Current' : ''}</small></button>${item.id !== session?.id ? `<button type="button" class="quick-chip delete-conversation" data-delete-session="${escapeHtml(item.id)}" aria-label="Delete saved conversation: ${escapeHtml(item.title)}">Delete</button>` : ''}</div>`).join('') : 'No saved conversations yet.';
-  } catch (error) { $('#conversationList').textContent = error.message; }
-}
-$('#showConversations').addEventListener('click', async () => {
-  const panel = $('#savedConversations');
-  panel.hidden = !panel.hidden;
-  if (!panel.hidden) await loadConversations();
-});
-$('#conversationList').addEventListener('click', async (event) => {
-  const deleteButton = event.target.closest('[data-delete-session]');
-  if (deleteButton) {
-    if (conversationBusy() || deleteButton.disabled) return;
-    const id = deleteButton.dataset.deleteSession;
-    if (id === session?.id) return;
-    if (!window.confirm('Delete this saved conversation and its clinician review permanently? This cannot be undone.')) return;
-    deleteButton.disabled = true;
-    submitting = true;
-    try {
-      await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
-      localStorage.removeItem(`${savedIntakeKey()}.${id}.draft`);
-      await loadConversations();
-      showToast('Conversation deleted.');
-    } catch (error) { showToast(error.message); deleteButton.disabled = false; }
-    finally { submitting = false; }
-    return;
-  }
-  const button = event.target.closest('[data-session]');
-  if (!button || conversationBusy()) return;
-  rememberIntake();
-  const id = button.dataset.session;
-  const draft = localStorage.getItem(`${savedIntakeKey()}.${id}.draft`) || '';
-  localStorage.setItem(savedIntakeKey(), JSON.stringify({ id, draft }));
-  window.location.reload();
-});
-$('#newConversation').addEventListener('click', () => { if (!conversationBusy()) $('#startNewIntake').click(); });
-$('#resetConversation').addEventListener('click', () => { if (!conversationBusy()) $('#startNewIntake').click(); });
+$('#undoFromReview').addEventListener('click', () => $('#undoAnswer').click());
 $('#viewConversation').addEventListener('click', () => {
   thread.hidden = !thread.hidden;
   $('#viewConversation').textContent = thread.hidden ? 'View conversation' : 'Hide conversation';
 });
-$('#startNewIntake').addEventListener('click', async () => {
+async function beginNewIntake() {
   const button = $('#startNewIntake');
   if (button.disabled || conversationBusy()) return;
   rememberIntake();
   button.disabled = true;
   submitting = true;
   try {
+    await discardEmptyConversation();
     const response = await api('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patient: currentUser.name, locale: langToLocale[locale] || 'en-IN' }) });
     session = await response.json();
     voiceEnabled = false;
@@ -488,25 +469,47 @@ $('#startNewIntake').addEventListener('click', async () => {
     rememberIntake();
     $('#viewConversation').textContent = 'View conversation';
     $('.intro-row').hidden = false;
-    $('#savedConversations').hidden = true;
     renderSteps(2);
     await loadTriage();
+    await conversationSidebar?.refresh();
   } catch (error) { showToast(`Could not start a new intake: ${error.message}`); }
   finally { button.disabled = false; submitting = false; }
-});
+}
+$('#startNewIntake').addEventListener('click', beginNewIntake);
 textInput.addEventListener('input', rememberIntake);
-document.querySelector('.end-button').addEventListener('click', async () => {
-  if (submitting || isRecording || transcribing) { showToast('Please finish your current response before saving.'); return; }
-  if (!session) { showToast('Your intake has not loaded. Please refresh and try again.'); return; }
+async function discardEmptyConversation() {
+  if (!session || submittedAnswerCount > 0) return false;
+  const id = session.id;
+  let deleted;
+  try {
+    const response = await api(`/api/sessions/${encodeURIComponent(id)}?onlyIfEmpty=1`, { method: 'DELETE' });
+    deleted = (await response.json()).deleted;
+  } catch (error) { if (error.status !== 404) throw error; deleted = true; }
+  if (!deleted) return false;
+  localStorage.removeItem(`${savedIntakeKey()}.${id}.draft`);
+  localStorage.removeItem(savedIntakeKey());
+  session = null;
+  return true;
+}
+window.addEventListener?.('pagehide', () => {
+  if (!session || !currentUser || submittedAnswerCount > 0 || submitting || transcribing || isRecording) return;
+  fetch(`/api/sessions/${encodeURIComponent(session.id)}?onlyIfEmpty=1`, {
+    method: 'DELETE', keepalive: true, headers: { Authorization: `Bearer ${authToken()}` },
+  }).catch(() => {});
+});
+window.addEventListener?.('pageshow', event => { if (event.persisted) window.location.reload(); });
+export async function saveBeforeSignOut() {
+  if (submitting || isRecording || transcribing) { showToast('Please finish your current response before signing out.'); return false; }
   try {
     rememberIntake();
-    await api(`/api/sessions/${encodeURIComponent(session.id)}`);
+    await discardEmptyConversation();
+    if (session) await api(`/api/sessions/${encodeURIComponent(session.id)}`);
     if (activeAudio) activeAudio.pause();
     window.speechSynthesis?.cancel();
-    $('#signOutButton').click();
-  } catch (error) { showToast(`Could not save and exit: ${error.message}`); }
-});
-textForm.addEventListener('submit', (event) => { event.preventDefault(); sendAnswer(textInput.value); });
+    return true;
+  } catch (error) { showToast(`Could not save and sign out: ${error.message}`); return false; }
+}
+textForm.addEventListener('submit', (event) => { event.preventDefault(); if (!isRecording) sendAnswer(textInput.value); });
 document.addEventListener('click', (event) => { const trigger = event.target.closest('.speak-trigger'); if (trigger) playNarration(trigger.dataset.text); });
 quickReplies.addEventListener('click', (event) => {
   const send = event.target.closest('[data-send]');
@@ -536,6 +539,28 @@ document.querySelectorAll('#languageMenu button').forEach((button) => button.add
 export function startIntake(user) {
   if (started) return; started = true;
   if (user) currentUser = user;
+  conversationSidebar = createConversationSidebar({
+    request: async (url, options) => (await api(url, options)).json(),
+    currentSession: () => session,
+    isBusy: () => submitting || transcribing || isRecording,
+    onNew: beginNewIntake,
+    onGuide: firstChat => {
+      $('.steps').hidden = !firstChat;
+      $('[data-i18n="stepOfFour"]').hidden = !firstChat;
+      $('.crumb .slash').hidden = !firstChat;
+    },
+    onOpen: async id => {
+      rememberIntake();
+      await discardEmptyConversation();
+      const draft = localStorage.getItem(`${savedIntakeKey()}.${id}.draft`) || '';
+      localStorage.setItem(savedIntakeKey(), JSON.stringify({ id, draft }));
+      window.location.reload();
+    },
+    onDeleted: async id => {
+      localStorage.removeItem(`${savedIntakeKey()}.${id}.draft`);
+      if (session?.id === id) { localStorage.removeItem(savedIntakeKey()); window.location.reload(); }
+    },
+  });
   const preferred = localStorage.getItem('meditrace.locale');
   if (preferred && ui[preferred]) locale = preferred;
   const languageName = $('#languageName');

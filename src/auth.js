@@ -1,6 +1,7 @@
 import './style.css';
-import { startIntake } from './main.js';
+import { startIntake, saveBeforeSignOut } from './main.js';
 import { startDoctorApp } from './doctor.js';
+import { startPreferences } from './preferences.js';
 
 const TOKEN_KEY = 'meditrace.token';
 const LOCALE_KEY = 'meditrace.locale';
@@ -114,6 +115,7 @@ function applyLoginTranslations() {
 
 function enterApp(user) {
   document.body.classList.add('authenticated');
+  startPreferences(user);
   if (window.lucide) window.lucide.createIcons();
   if (user && user.role === 'Doctor') {
     startDoctorApp(user, { token: storedToken(), onSignOut: signOut });
@@ -201,6 +203,7 @@ async function configureProviders() {
 }
 
 async function signOut() {
+  if (!await saveBeforeSignOut()) return;
   const token = storedToken();
   if (token) await fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
   clearToken();
