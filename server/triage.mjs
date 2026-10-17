@@ -223,7 +223,7 @@ export function candidateQuestions(state) {
   const answeredIds = new Set(state.askedQuestions);
   return flowFor(state.complaint)
     .filter((question) => !answeredIds.has(question.id) && (!question.requires || question.requires(state)))
-    .map((question) => ({ id: question.id, text: question.text, summaryLabel: question.summaryLabel, kind: question.kind, options: question.options || null }));
+    .map((question) => ({ id: question.id, text: question.text, summaryLabel: question.summaryLabel, phase: question.phase, kind: question.kind, options: question.options || null }));
 }
 
 export function resolveQuestion(state, locale = 'en') {

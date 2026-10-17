@@ -12,6 +12,27 @@ let session = null;
 let currentQuestion = null;
 let lastQuestionEl = null;
 let submitting = false;
+let transcribing = false;
+// Voice is opt-in for each page visit, including restored intakes.
+let voiceEnabled = false;
+let intakeStep = 2;
+function renderSteps(step = intakeStep) {
+  intakeStep = step;
+  document.querySelectorAll('.steps .step').forEach((element, index) => {
+    const number = index + 1;
+    element.className = `step${number < step ? ' complete' : number === step ? ' current' : ''}`;
+    if (number === step) element.setAttribute('aria-current', 'step');
+    else element.removeAttribute('aria-current');
+    element.querySelector('span').innerHTML = number < step ? icon('check') : String(number);
+    element.querySelector('small').textContent = number < step ? strings().completed : number === step ? strings().inProgress : strings().upNext;
+  });
+  $('[data-i18n="stepOfFour"]').textContent = strings().stepOfFour.replace('2', String(step));
+  if (window.lucide) lucide.createIcons();
+}
+const savedIntakeKey = () => `meditrace.intake.${currentUser.id}`;
+function rememberIntake() {
+  if (session && currentUser) localStorage.setItem(savedIntakeKey(), JSON.stringify({ id: session.id, draft: textInput.value }));
+}
 let mediaRecorder;
 let audioChunks = [];
 let isRecording = false;
@@ -57,6 +78,7 @@ function applyTranslations() {
   document.querySelectorAll('[data-i18n]').forEach((element) => { element.innerHTML = strings()[element.dataset.i18n]; });
   textInput.placeholder = strings().typePlaceholder;
   if (!isRecording) voiceStatus.textContent = strings().tapToSpeak;
+  renderSteps();
 }
 
 function addPatientMessage(answer) {
@@ -69,7 +91,7 @@ function addPatientMessage(answer) {
   return message;
 }
 
-function addAssistantMessage(rawText) {
+function addAssistantMessage(rawText, { narrate = true } = {}) {
   const text = withName(rawText);
   const message = document.createElement('article');
   message.className = 'message assistant-message next-message';
@@ -79,7 +101,7 @@ function addAssistantMessage(rawText) {
   thread.append(message);
   lucide.createIcons();
   message.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  if (rawText && /[?.]$/.test(String(rawText).trim())) playNarration(text);
+  if (narrate && voiceEnabled && rawText && /[?.]$/.test(String(rawText).trim())) playNarration(text);
   return message;
 }
 
@@ -152,13 +174,17 @@ function renderQuestion(question, { append = true } = {}) {
     lastQuestionEl.querySelector('p').textContent = withName(question.text);
     const trigger = lastQuestionEl.querySelector('.speak-trigger');
     if (trigger) trigger.dataset.text = withName(question.text);
-    playNarration(question.text);
+    if (voiceEnabled) playNarration(question.text);
   }
   renderChips(question);
   textInput.focus();
 }
 
 function renderTriage(payload) {
+  $('#intakeReview').hidden = true;
+  thread.hidden = false;
+  voiceDock.hidden = false;
+  renderSteps(payload.escalated ? intakeStep : payload.step || (payload.complete ? 4 : payload.question?.phase === 'history' ? 3 : 2));
   renderSummaryItems(payload.answered);
   const answeredCount = (payload.answered || []).length;
   const remaining = typeof payload.remaining === 'number' ? payload.remaining : 0;
@@ -170,7 +196,7 @@ function renderTriage(payload) {
 
   if (payload.escalated) { showEscalation(payload); return; }
   if (escalationBanner) escalationBanner.hidden = true;
-  if (payload.complete) { finishIntake(); return; }
+  if (payload.complete) { finishIntake(payload.answered || []); return; }
   voiceDock.classList.remove('complete');
   renderQuestion(payload.question);
 }
@@ -196,14 +222,23 @@ function showEscalation(payload) {
   escalationBanner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-function finishIntake() {
+function finishIntake(answers = []) {
+  currentQuestion = null;
+  textInput.value = '';
+  rememberIntake();
   voiceDock.classList.add('complete');
   voiceStatus.textContent = strings().ready;
   micButton.disabled = true;
   textInput.disabled = true;
   if (quickReplies) { quickReplies.hidden = true; quickReplies.innerHTML = ''; }
   if (escalationBanner) escalationBanner.hidden = true;
-  addAssistantMessage(strings().completeReply);
+  $('#intakeReview').hidden = false;
+  $('#reviewAnswers').innerHTML = answers.map((answer, index) => `<article class="summary-item"><span>${index + 1}</span><div><small>${escapeHtml(answer.label)}</small><p>${escapeHtml(answer.answer)}</p></div></article>`).join('');
+  thread.hidden = true;
+  voiceDock.hidden = true;
+  $('.intro-row').hidden = true;
+  $('#progressBar').style.width = '100%';
+  $('#intakeReview').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 async function sendAnswer(raw) {
@@ -219,9 +254,12 @@ async function sendAnswer(raw) {
   try {
     const response = await api(`/api/sessions/${session.id}/turn`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionId: question.id, answer }) });
     const payload = await response.json();
+    rememberIntake();
     renderTriage(payload);
   } catch (error) {
     showToast(error.message);
+    textInput.value = answer;
+    rememberIntake();
     textInput.disabled = false;
     micButton.disabled = false;
     renderChips(question);
@@ -240,9 +278,10 @@ function setRecording(value) {
 }
 
 async function transcribeAudio() {
+  transcribing = true;
   voiceStatus.textContent = strings().transcribing;
   const audio = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-  if (audio.size < 1000) { showToast(strings().voiceError); voiceStatus.textContent = strings().tapToSpeak; return; }
+  if (audio.size < 1000) { transcribing = false; showToast(strings().voiceError); voiceStatus.textContent = strings().tapToSpeak; return; }
   const form = new FormData();
   form.append('audio', audio, 'response.webm');
   form.append('locale', langToLocale[locale] || 'en-IN');
@@ -255,6 +294,7 @@ async function transcribeAudio() {
     if (error.status === 503 || error.status === 501) { sttMode = 'browser'; showToast('Server transcription is unavailable. Switching to your device voice input — tap the microphone again to speak.'); }
     else { showToast(error.message === 'Request failed.' ? strings().voiceError : error.message); }
   } finally {
+    transcribing = false;
     if (!isRecording && escalationBanner && escalationBanner.hidden) voiceStatus.textContent = strings().tapToSpeak;
   }
 }
@@ -267,14 +307,30 @@ function startBrowserRecognition() {
   activeRecognition.interimResults = false;
   activeRecognition.maxAlternatives = 1;
   activeRecognition.onstart = () => setRecording(true);
-  activeRecognition.onerror = (event) => { setRecording(false); activeRecognition = null; showToast(event.error === 'not-allowed' ? 'Microphone access is needed for voice input. You can type your response instead.' : strings().voiceError); };
+  activeRecognition.onerror = (event) => {
+    setRecording(false);
+    activeRecognition = null;
+    const messages = {
+      'not-allowed': 'Microphone or speech recognition permission was denied. Allow microphone access in your browser settings, then try again.',
+      'service-not-allowed': 'This browser does not allow its speech recognition service. Open this app in Chrome or Edge, or configure server transcription.',
+      'network': 'The browser speech recognition service could not connect. Try Chrome or Edge with an internet connection, or configure server transcription.',
+      'audio-capture': 'No working microphone was found. Check your microphone and Windows input settings.',
+      'no-speech': 'No speech was detected. Tap the microphone and start speaking after it shows Recording.',
+      'language-not-supported': 'This browser does not support speech recognition for the selected language. Try another language or use text input.',
+    };
+    if (event.error !== 'aborted') showToast(messages[event.error] || `Browser speech recognition stopped (${event.error || 'unknown error'}). Try Chrome or Edge, or type your response.`);
+  };
   activeRecognition.onend = () => { setRecording(false); activeRecognition = null; };
   activeRecognition.onresult = (event) => { const text = ((event.results[0] && event.results[0][0] && event.results[0][0].transcript) || '').trim(); if (text) sendAnswer(text); else showToast(strings().voiceError); };
   try { activeRecognition.start(); } catch { showToast('Voice input is not supported in this browser.'); activeRecognition = null; }
 }
 
 async function toggleRecording() {
+  if (submitting || transcribing) return;
   if (textInput.disabled && !isRecording) return;
+  voiceEnabled = true;
+  if (activeAudio) activeAudio.pause();
+  window.speechSynthesis?.cancel();
   if (sttMode === 'browser') { if (activeRecognition && isRecording) { activeRecognition.stop(); return; } startBrowserRecognition(); return; }
   if (isRecording && mediaRecorder) { mediaRecorder.stop(); return; }
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { sttMode = 'browser'; startBrowserRecognition(); return; }
@@ -314,8 +370,31 @@ async function initialise() {
   applyTranslations();
   detectCapabilities();
   try {
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem(savedIntakeKey()) || 'null'); } catch { localStorage.removeItem(savedIntakeKey()); }
+    if (saved?.id) {
+      try {
+        const response = await api(`/api/sessions/${encodeURIComponent(saved.id)}`);
+        session = await response.json();
+        locale = session.locale.split('-')[0];
+        $('#languageName').textContent = localeNames[locale] || localeNames.en;
+        applyTranslations();
+        for (const answer of session.transcript || session.triage?.answers || session.responses || []) {
+          addAssistantMessage(answer.questionText || answer.label || answer.questionId, { narrate: false });
+          addPatientMessage(answer.answer);
+        }
+        await loadTriage();
+        if (!textInput.disabled) textInput.value = saved.draft || '';
+        showToast('Your saved intake has been restored.');
+        return;
+      } catch (error) {
+        if (error.status !== 404) throw error;
+        localStorage.removeItem(savedIntakeKey());
+      }
+    }
     const created = await api('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patient: (currentUser && currentUser.name) || 'Guest patient', locale: langToLocale[locale] }) });
     session = await created.json();
+    rememberIntake();
     await loadTriage();
   } catch (error) {
     showToast(`Could not start intake: ${error.message}`);
@@ -323,6 +402,45 @@ async function initialise() {
 }
 
 micButton.addEventListener('click', toggleRecording);
+$('#viewConversation').addEventListener('click', () => {
+  thread.hidden = !thread.hidden;
+  $('#viewConversation').textContent = thread.hidden ? 'View conversation' : 'Hide conversation';
+});
+$('#startNewIntake').addEventListener('click', async () => {
+  const button = $('#startNewIntake');
+  if (button.disabled || submitting || isRecording || transcribing) return;
+  rememberIntake();
+  button.disabled = true;
+  submitting = true;
+  try {
+    const response = await api('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patient: currentUser.name, locale: langToLocale[locale] || 'en-IN' }) });
+    session = await response.json();
+    voiceEnabled = false;
+    if (activeAudio) activeAudio.pause();
+    window.speechSynthesis?.cancel();
+    thread.innerHTML = '';
+    lastQuestionEl = null;
+    textInput.value = '';
+    rememberIntake();
+    $('#viewConversation').textContent = 'View conversation';
+    $('.intro-row').hidden = false;
+    renderSteps(2);
+    await loadTriage();
+  } catch (error) { showToast(`Could not start a new intake: ${error.message}`); }
+  finally { button.disabled = false; submitting = false; }
+});
+textInput.addEventListener('input', rememberIntake);
+document.querySelector('.end-button').addEventListener('click', async () => {
+  if (submitting || isRecording || transcribing) { showToast('Please finish your current response before saving.'); return; }
+  if (!session) { showToast('Your intake has not loaded. Please refresh and try again.'); return; }
+  try {
+    rememberIntake();
+    await api(`/api/sessions/${encodeURIComponent(session.id)}`);
+    if (activeAudio) activeAudio.pause();
+    window.speechSynthesis?.cancel();
+    $('#signOutButton').click();
+  } catch (error) { showToast(`Could not save and exit: ${error.message}`); }
+});
 textForm.addEventListener('submit', (event) => { event.preventDefault(); sendAnswer(textInput.value); });
 document.addEventListener('click', (event) => { const trigger = event.target.closest('.speak-trigger'); if (trigger) playNarration(trigger.dataset.text); });
 quickReplies.addEventListener('click', (event) => {

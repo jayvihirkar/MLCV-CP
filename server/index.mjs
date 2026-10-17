@@ -168,6 +168,7 @@ app.post('/api/sessions', authenticate, async (req, res, next) => {
     const locale = req.body.locale || 'en-IN';
     const session = {
       id: crypto.randomUUID(),
+      userId: req.user.userId,
       patient: req.body.patient || 'Guest patient',
       locale,
       responses: [],
@@ -184,8 +185,14 @@ app.post('/api/sessions', authenticate, async (req, res, next) => {
 app.get('/api/sessions/:id', authenticate, async (req, res, next) => {
   try {
     const session = findSession(await readSessions(), req.params.id);
-    if (!session) return res.status(404).json({ error: 'Intake session not found.' });
-    res.json(session);
+    if (!session || session.userId !== req.user.userId) return res.status(404).json({ error: 'Intake session not found.' });
+    const locale = String(session.locale || 'en').split('-')[0];
+    const transcript = (session.triage?.answers || session.responses || []).map((answer) => {
+      const question = questionById(answer.questionId);
+      const text = question?.text;
+      return { ...answer, questionText: answer.questionText || (typeof text === 'string' ? text : text?.[locale] || text?.en) || answer.label || 'Previous question' };
+    });
+    res.json({ ...session, transcript });
   } catch (error) { next(error); }
 });
 
@@ -195,7 +202,7 @@ app.put('/api/sessions/:id/responses/:questionId', authenticate, async (req, res
     if (!answer || answer.length > 2000) return res.status(400).json({ error: 'A response of up to 2,000 characters is required.' });
     const sessions = await readSessions();
     const session = findSession(sessions, req.params.id);
-    if (!session) return res.status(404).json({ error: 'Intake session not found.' });
+    if (!session || session.userId !== req.user.userId) return res.status(404).json({ error: 'Intake session not found.' });
     const response = { questionId: req.params.questionId, label: String(req.body.label || 'Response'), answer, locale: String(req.body.locale || session.locale), updatedAt: new Date().toISOString() };
     const oldIndex = session.responses.findIndex((item) => item.questionId === response.questionId);
     if (oldIndex === -1) session.responses.push(response); else session.responses[oldIndex] = response;
@@ -221,6 +228,7 @@ function triagePayload(session) {
     remaining: resolved.complete || resolved.escalated ? 0 : candidateQuestions(state).length,
     complete: resolved.complete,
     escalated: resolved.escalated,
+    step: resolved.complete ? 4 : ([resolved.question, ...state.answers.map((answer) => questionById(answer.questionId))].some((question) => question?.phase === 'history') ? 3 : 2),
     question: resolved.question || null,
   };
   if (resolved.escalated) payload.escalation = escalationMessage(state);
@@ -230,7 +238,7 @@ function triagePayload(session) {
 app.get('/api/sessions/:id/triage', authenticate, async (req, res, next) => {
   try {
     const session = findSession(await readSessions(), req.params.id);
-    if (!session) return res.status(404).json({ error: 'Intake session not found.' });
+    if (!session || session.userId !== req.user.userId) return res.status(404).json({ error: 'Intake session not found.' });
     res.json(triagePayload(session));
   } catch (error) { next(error); }
 });
@@ -241,7 +249,7 @@ app.post('/api/sessions/:id/turn', authenticate, async (req, res, next) => {
     if (!answer || answer.length > 2000) return res.status(400).json({ error: 'A response of up to 2,000 characters is required.' });
     const sessions = await readSessions();
     const session = findSession(sessions, req.params.id);
-    if (!session) return res.status(404).json({ error: 'Intake session not found.' });
+    if (!session || session.userId !== req.user.userId) return res.status(404).json({ error: 'Intake session not found.' });
     const state = ensureTriage(session);
     if (state.escalated) return res.json(triagePayload(session));
 
@@ -251,6 +259,9 @@ app.post('/api/sessions/:id/turn', authenticate, async (req, res, next) => {
     if (!question) return res.json(triagePayload(session));
 
     applyAnswer(state, question.id, answer, null, current.question && current.question.id === question.id ? current.question.summaryLabel : null);
+    const questionText = current.question?.id === question.id ? current.question.text : question.text;
+    const locale = String(session.locale || 'en').split('-')[0];
+    state.answers[state.answers.length - 1].questionText = typeof questionText === 'string' ? questionText : questionText?.[locale] || questionText?.en;
     session.updatedAt = new Date().toISOString();
 
     if (!state.escalated && geminiConfigured()) {
