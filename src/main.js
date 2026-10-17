@@ -31,7 +31,10 @@ function renderSteps(step = intakeStep) {
 }
 const savedIntakeKey = () => `meditrace.intake.${currentUser.id}`;
 function rememberIntake() {
-  if (session && currentUser) localStorage.setItem(savedIntakeKey(), JSON.stringify({ id: session.id, draft: textInput.value }));
+  if (session && currentUser) {
+    localStorage.setItem(savedIntakeKey(), JSON.stringify({ id: session.id, draft: textInput.value }));
+    localStorage.setItem(`${savedIntakeKey()}.${session.id}.draft`, textInput.value);
+  }
 }
 let mediaRecorder;
 let audioChunks = [];
@@ -181,6 +184,7 @@ function renderQuestion(question, { append = true } = {}) {
 }
 
 function renderTriage(payload) {
+  $('#undoAnswer').disabled = !(payload.answered || []).length;
   $('#intakeReview').hidden = true;
   thread.hidden = false;
   voiceDock.hidden = false;
@@ -246,6 +250,7 @@ async function sendAnswer(raw) {
   if (!answer || !session || !currentQuestion || submitting) return;
   const question = currentQuestion;
   submitting = true;
+  $('#undoAnswer').disabled = true;
   textInput.disabled = true;
   micButton.disabled = true;
   if (quickReplies) { quickReplies.hidden = true; quickReplies.innerHTML = ''; }
@@ -402,13 +407,72 @@ async function initialise() {
 }
 
 micButton.addEventListener('click', toggleRecording);
+function conversationBusy() {
+  if (submitting || transcribing || isRecording) { showToast('Please finish your current response first.'); return true; }
+  return false;
+}
+$('#undoAnswer').addEventListener('click', async () => {
+  if (!session || conversationBusy()) return;
+  const button = $('#undoAnswer');
+  button.disabled = true;
+  submitting = true;
+  try {
+    const response = await api(`/api/sessions/${session.id}/undo`, { method: 'POST' });
+    const payload = await response.json();
+    textInput.value = payload.removedAnswer || '';
+    rememberIntake();
+    window.location.reload();
+  } catch (error) { showToast(error.message); button.disabled = false; }
+  finally { submitting = false; }
+});
+async function loadConversations() {
+  $('#conversationList').textContent = 'Loading…';
+  try {
+    const response = await api('/api/sessions');
+    const conversations = await response.json();
+    $('#conversationList').innerHTML = conversations.length ? conversations.map((item) => `<div class="saved-conversation-row"><button type="button" class="saved-conversation" data-session="${escapeHtml(item.id)}" ${item.id === session?.id ? 'disabled' : ''}><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.status)} · ${item.count} answers · ${escapeHtml(new Date(item.createdAt).toLocaleString())}${item.id === session?.id ? ' · Current' : ''}</small></button>${item.id !== session?.id ? `<button type="button" class="quick-chip delete-conversation" data-delete-session="${escapeHtml(item.id)}" aria-label="Delete saved conversation: ${escapeHtml(item.title)}">Delete</button>` : ''}</div>`).join('') : 'No saved conversations yet.';
+  } catch (error) { $('#conversationList').textContent = error.message; }
+}
+$('#showConversations').addEventListener('click', async () => {
+  const panel = $('#savedConversations');
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) await loadConversations();
+});
+$('#conversationList').addEventListener('click', async (event) => {
+  const deleteButton = event.target.closest('[data-delete-session]');
+  if (deleteButton) {
+    if (conversationBusy() || deleteButton.disabled) return;
+    const id = deleteButton.dataset.deleteSession;
+    if (id === session?.id) return;
+    if (!window.confirm('Delete this saved conversation and its clinician review permanently? This cannot be undone.')) return;
+    deleteButton.disabled = true;
+    submitting = true;
+    try {
+      await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      localStorage.removeItem(`${savedIntakeKey()}.${id}.draft`);
+      await loadConversations();
+      showToast('Conversation deleted.');
+    } catch (error) { showToast(error.message); deleteButton.disabled = false; }
+    finally { submitting = false; }
+    return;
+  }
+  const button = event.target.closest('[data-session]');
+  if (!button || conversationBusy()) return;
+  rememberIntake();
+  const id = button.dataset.session;
+  const draft = localStorage.getItem(`${savedIntakeKey()}.${id}.draft`) || '';
+  localStorage.setItem(savedIntakeKey(), JSON.stringify({ id, draft }));
+  window.location.reload();
+});
+$('#newConversation').addEventListener('click', () => { if (!conversationBusy()) $('#startNewIntake').click(); });
+$('#resetConversation').addEventListener('click', () => { if (!conversationBusy()) $('#startNewIntake').click(); });
 $('#viewConversation').addEventListener('click', () => {
   thread.hidden = !thread.hidden;
   $('#viewConversation').textContent = thread.hidden ? 'View conversation' : 'Hide conversation';
 });
 $('#startNewIntake').addEventListener('click', async () => {
   const button = $('#startNewIntake');
-  if (button.disabled || submitting || isRecording || transcribing) return;
+  if (button.disabled || conversationBusy()) return;
   rememberIntake();
   button.disabled = true;
   submitting = true;
@@ -424,6 +488,7 @@ $('#startNewIntake').addEventListener('click', async () => {
     rememberIntake();
     $('#viewConversation').textContent = 'View conversation';
     $('.intro-row').hidden = false;
+    $('#savedConversations').hidden = true;
     renderSteps(2);
     await loadTriage();
   } catch (error) { showToast(`Could not start a new intake: ${error.message}`); }

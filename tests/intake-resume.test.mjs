@@ -53,6 +53,9 @@ test('saved intake survives login and server restart, and rejects other accounts
     const next = await turn.json();
     assert.equal(next.answered[0].answer, 'I have a fever');
     const other = await login('doctor@meditrace.health');
+    const otherHistory = await (await request('/api/sessions', other)).json();
+    assert.ok(!otherHistory.some(item => item.id === session.id));
+    assert.equal((await request(`${path}/undo`, other, 'POST')).status, 404);
     for (const [suffix, method, body] of [['', 'GET'], ['/triage', 'GET'], ['/turn', 'POST', { answer: 'No' }], ['/responses/severity', 'PUT', { answer: '2' }]]) {
       assert.equal((await request(path + suffix, other, method, body)).status, 404);
     }
@@ -80,6 +83,28 @@ test('saved intake survives login and server restart, and rejects other accounts
     assert.ok(reachedHistory, 'The intake must transition to health history');
     assert.equal(progress.step, 4);
     assert.equal(progress.complete, true);
+    const beforeUndo = await (await request(path, patient)).json();
+    const undone = await (await request(`${path}/undo`, patient, 'POST')).json();
+    assert.equal(undone.complete, false);
+    assert.equal(undone.question.id, beforeUndo.transcript.at(-1).questionId);
+    assert.equal(undone.removedAnswer, beforeUndo.transcript.at(-1).answer);
+    assert.equal(undone.answered.length, beforeUndo.transcript.length - 1);
+    const newConversation = await (await request('/api/sessions', patient, 'POST', { locale: 'en-IN', patient: 'Another intake' })).json();
+    assert.notEqual(newConversation.id, session.id);
+    const historyList = await (await request('/api/sessions', patient)).json();
+    assert.ok(historyList.some(item => item.id === session.id));
+    assert.ok(historyList.some(item => item.id === newConversation.id));
+    assert.equal((await request(path, patient)).status, 200);
+    assert.equal((await request(`/api/sessions/${newConversation.id}/undo`, patient, 'POST')).status, 409);
+    const otherAfterRestart = await login('doctor@meditrace.health');
+    assert.equal((await request(path, otherAfterRestart, 'DELETE')).status, 404);
+    assert.equal((await request(path, patient)).status, 200);
+    assert.equal((await request(path, patient, 'DELETE')).status, 200);
+    assert.equal((await request(path, patient)).status, 404);
+    assert.equal((await request(path, patient, 'DELETE')).status, 404);
+    const afterDelete = await (await request('/api/sessions', patient)).json();
+    assert.ok(!afterDelete.some(item => item.id === session.id));
+    assert.ok(afterDelete.some(item => item.id === newConversation.id));
     assert.equal((await request('/api/sessions/missing', patient)).status, 404);
   } finally {
     if (server) await stop();

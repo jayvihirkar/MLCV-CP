@@ -23,10 +23,10 @@ test('patient restores transcript, question and draft, then saves and exits', as
     document: { querySelector: query, querySelectorAll: selector => selector === '.steps .step' ? steps : [], addEventListener() {}, createElement: element },
     localStorage: { getItem: key => saved.get(key) || null, setItem: (key, value) => saved.set(key, value), removeItem: key => saved.delete(key) },
     sessionStorage: { getItem: () => 'token' }, Headers, console, setTimeout: () => 0,
-    window: { lucide: { createIcons() {} } }, lucide: { createIcons() {} },
+    window: { lucide: { createIcons() {} }, confirm: () => context.confirmDelete === true, location: { reload() { context.reloaded = true; } } }, lucide: { createIcons() {} },
     fetch: async (path, options) => {
       calls.push([path, options?.method || 'GET']);
-      const data = path === '/api/sessions' && options?.method === 'POST' ? { id: 'new-1', locale: 'en-IN' } : path === '/api/health' ? {} : path === '/api/sessions/saved-1' ? {
+      const data = path.endsWith('/undo') ? { removedAnswer: 'Correct this answer' } : path === '/api/sessions' && options?.method === 'POST' ? { id: 'new-1', locale: 'en-IN' } : path === '/api/sessions' ? [{ id: 'saved-1', title: 'Fever', count: 1, status: 'In progress', createdAt: '2026-10-18T00:00:00Z' }] : path === '/api/health' ? {} : path === '/api/sessions/saved-1' ? {
         id: 'saved-1', locale: 'en-IN', transcript: [{ questionText: 'What is bothering you today?', label: 'Main concern', answer: 'Fever' }],
       } : path.endsWith('/triage') ? {
         answered: [{ label: 'Main concern', answer: 'Fever' }], remaining: 2,
@@ -78,4 +78,17 @@ test('patient restores transcript, question and draft, then saves and exits', as
   assert.equal(vm.runInContext('intakeStep', context), 2);
   assert.equal(JSON.parse(saved.get('meditrace.intake.patient-1')).id, 'new-1');
   assert.equal(vm.runInContext('voiceEnabled', context), false);
+  await query('#undoAnswer').listeners.click();
+  assert.equal(context.reloaded, true);
+  assert.equal(JSON.parse(saved.get('meditrace.intake.patient-1')).draft, 'Correct this answer');
+  await query('#showConversations').listeners.click();
+  assert.ok(query('#conversationList').innerHTML.includes('Fever'));
+  assert.ok(query('#conversationList').innerHTML.includes('saved-1'));
+  const deleteButton = { dataset: { deleteSession: 'saved-1' }, disabled: false };
+  const deleteEvent = { target: { closest: selector => selector === '[data-delete-session]' ? deleteButton : null } };
+  await query('#conversationList').listeners.click(deleteEvent);
+  assert.ok(!calls.some(([, method]) => method === 'DELETE'), 'Cancel must preserve the conversation');
+  context.confirmDelete = true;
+  await query('#conversationList').listeners.click(deleteEvent);
+  assert.ok(calls.some(([url, method]) => url === '/api/sessions/saved-1' && method === 'DELETE'));
 });
