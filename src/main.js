@@ -425,18 +425,37 @@ $('#undoAnswer').addEventListener('click', async () => {
   } catch (error) { showToast(error.message); button.disabled = false; }
   finally { submitting = false; }
 });
-$('#showConversations').addEventListener('click', async () => {
-  const panel = $('#savedConversations');
-  panel.hidden = !panel.hidden;
-  if (panel.hidden) return;
+async function loadConversations() {
   $('#conversationList').textContent = 'Loading…';
   try {
     const response = await api('/api/sessions');
     const conversations = await response.json();
-    $('#conversationList').innerHTML = conversations.length ? conversations.map((item) => `<button type="button" class="saved-conversation" data-session="${escapeHtml(item.id)}" ${item.id === session?.id ? 'disabled' : ''}><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.status)} · ${item.count} answers · ${escapeHtml(new Date(item.createdAt).toLocaleString())}${item.id === session?.id ? ' · Current' : ''}</small></button>`).join('') : 'No saved conversations yet.';
+    $('#conversationList').innerHTML = conversations.length ? conversations.map((item) => `<div class="saved-conversation-row"><button type="button" class="saved-conversation" data-session="${escapeHtml(item.id)}" ${item.id === session?.id ? 'disabled' : ''}><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.status)} · ${item.count} answers · ${escapeHtml(new Date(item.createdAt).toLocaleString())}${item.id === session?.id ? ' · Current' : ''}</small></button>${item.id !== session?.id ? `<button type="button" class="quick-chip delete-conversation" data-delete-session="${escapeHtml(item.id)}" aria-label="Delete saved conversation: ${escapeHtml(item.title)}">Delete</button>` : ''}</div>`).join('') : 'No saved conversations yet.';
   } catch (error) { $('#conversationList').textContent = error.message; }
+}
+$('#showConversations').addEventListener('click', async () => {
+  const panel = $('#savedConversations');
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) await loadConversations();
 });
-$('#conversationList').addEventListener('click', (event) => {
+$('#conversationList').addEventListener('click', async (event) => {
+  const deleteButton = event.target.closest('[data-delete-session]');
+  if (deleteButton) {
+    if (conversationBusy() || deleteButton.disabled) return;
+    const id = deleteButton.dataset.deleteSession;
+    if (id === session?.id) return;
+    if (!window.confirm('Delete this saved conversation and its clinician review permanently? This cannot be undone.')) return;
+    deleteButton.disabled = true;
+    submitting = true;
+    try {
+      await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      localStorage.removeItem(`${savedIntakeKey()}.${id}.draft`);
+      await loadConversations();
+      showToast('Conversation deleted.');
+    } catch (error) { showToast(error.message); deleteButton.disabled = false; }
+    finally { submitting = false; }
+    return;
+  }
   const button = event.target.closest('[data-session]');
   if (!button || conversationBusy()) return;
   rememberIntake();

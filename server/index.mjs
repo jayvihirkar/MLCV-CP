@@ -194,6 +194,20 @@ app.get('/api/sessions', authenticate, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+app.delete('/api/sessions/:id', authenticate, async (req, res, next) => {
+  try {
+    const sessions = await readSessions();
+    const index = sessions.findIndex((session) => session.id === req.params.id && session.userId === req.user.userId);
+    if (index === -1) return res.status(404).json({ error: 'Intake session not found.' });
+    const reviews = await readReviews();
+    delete reviews[`INTAKE-${String(sessions[index].id).slice(0, 8)}`];
+    sessions.splice(index, 1);
+    await writeSessions(sessions);
+    await writeReviews(reviews);
+    res.json({ ok: true });
+  } catch (error) { next(error); }
+});
+
 app.post('/api/sessions/:id/undo', authenticate, async (req, res, next) => {
   try {
     const sessions = await readSessions();

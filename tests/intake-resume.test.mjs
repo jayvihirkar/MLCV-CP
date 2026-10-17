@@ -96,6 +96,15 @@ test('saved intake survives login and server restart, and rejects other accounts
     assert.ok(historyList.some(item => item.id === newConversation.id));
     assert.equal((await request(path, patient)).status, 200);
     assert.equal((await request(`/api/sessions/${newConversation.id}/undo`, patient, 'POST')).status, 409);
+    const otherAfterRestart = await login('doctor@meditrace.health');
+    assert.equal((await request(path, otherAfterRestart, 'DELETE')).status, 404);
+    assert.equal((await request(path, patient)).status, 200);
+    assert.equal((await request(path, patient, 'DELETE')).status, 200);
+    assert.equal((await request(path, patient)).status, 404);
+    assert.equal((await request(path, patient, 'DELETE')).status, 404);
+    const afterDelete = await (await request('/api/sessions', patient)).json();
+    assert.ok(!afterDelete.some(item => item.id === session.id));
+    assert.ok(afterDelete.some(item => item.id === newConversation.id));
     assert.equal((await request('/api/sessions/missing', patient)).status, 404);
   } finally {
     if (server) await stop();
