@@ -182,6 +182,54 @@ app.post('/api/sessions', authenticate, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+app.get('/api/sessions', authenticate, async (req, res, next) => {
+  try {
+    const sessions = (await readSessions()).filter((session) => session.userId === req.user.userId);
+    res.json(sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((session) => ({
+      id: session.id, createdAt: session.createdAt, updatedAt: session.updatedAt,
+      title: session.triage?.chiefComplaint || 'New conversation',
+      count: session.triage?.answers?.length || session.responses?.length || 0,
+      status: session.triage?.escalated ? 'Needs attention' : session.triage?.complete ? 'Complete' : 'In progress',
+    })));
+  } catch (error) { next(error); }
+});
+
+app.post('/api/sessions/:id/undo', authenticate, async (req, res, next) => {
+  try {
+    const sessions = await readSessions();
+    const session = findSession(sessions, req.params.id);
+    if (!session || session.userId !== req.user.userId) return res.status(404).json({ error: 'Intake session not found.' });
+    const previous = ensureTriage(session);
+    const removed = previous.answers.at(-1);
+    if (!removed) return res.status(409).json({ error: 'There is no answer to undo yet.' });
+    const snapshot = session.undoHistory?.pop();
+    if (snapshot) session.triage = snapshot;
+    else {
+      const rebuilt = createTriageState({ adaptive: previous.adaptive });
+      for (const answer of previous.answers.slice(0, -1)) {
+        applyAnswer(rebuilt, answer.questionId, answer.answer, null, answer.label);
+        Object.assign(rebuilt.answers[rebuilt.answers.length - 1], answer);
+      }
+      session.triage = rebuilt;
+    }
+    session.triage.nextQuestionId = removed.questionId;
+    session.responses = (session.responses || []).filter((answer) => answer.questionId !== removed.questionId);
+    session.updatedAt = new Date().toISOString();
+    // A clinician's previous decision no longer describes this revised intake.
+    const reviews = await readReviews();
+    const review = reviews[`INTAKE-${String(session.id).slice(0, 8)}`];
+    if (review) {
+      review.decision = 'draft';
+      review.approvedAt = null;
+      review.updatedAt = session.updatedAt;
+      for (const section of Object.values(review.sections || {})) section.status = 'pending';
+    }
+    await writeReviews(reviews);
+    await writeSessions(sessions);
+    res.json({ ...triagePayload(session), removedAnswer: removed.answer });
+  } catch (error) { next(error); }
+});
+
 app.get('/api/sessions/:id', authenticate, async (req, res, next) => {
   try {
     const session = findSession(await readSessions(), req.params.id);
@@ -258,6 +306,8 @@ app.post('/api/sessions/:id/turn', authenticate, async (req, res, next) => {
     const question = requestedId ? questionById(requestedId) : current.question;
     if (!question) return res.json(triagePayload(session));
 
+    session.undoHistory = session.undoHistory || [];
+    session.undoHistory.push(structuredClone(state));
     applyAnswer(state, question.id, answer, null, current.question && current.question.id === question.id ? current.question.summaryLabel : null);
     const questionText = current.question?.id === question.id ? current.question.text : question.text;
     const locale = String(session.locale || 'en').split('-')[0];

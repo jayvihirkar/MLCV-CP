@@ -182,6 +182,17 @@
         </section>
 
         <section class="conversation" aria-live="polite">
+          <div class="conversation-actions">
+            <button type="button" id="undoAnswer" class="quick-chip" disabled>Undo last answer</button>
+            <button type="button" id="resetConversation" class="quick-chip">Reset conversation</button>
+            <button type="button" id="newConversation" class="quick-chip">New conversation</button>
+            <button type="button" id="showConversations" class="quick-chip">Saved conversations</button>
+          </div>
+          <section id="savedConversations" class="saved-conversations" hidden aria-label="Saved conversations">
+            <h2>Saved conversations</h2>
+            <p>Reset and New conversation both keep your earlier intake here.</p>
+            <div id="conversationList"></div>
+          </section>
           <div class="intro-row">
             <div><p class="eyebrow" data-i18n="letsBegin">Let’s begin</p><h1 data-i18n="pageTitle">Tell me what brings<br/>you in today.</h1></div>
             <div class="time-pill"><i data-lucide="clock-3"></i><span data-i18n="aboutThreeMinutes">About 3 minutes</span></div>
