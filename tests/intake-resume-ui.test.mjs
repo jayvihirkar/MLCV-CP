@@ -1,0 +1,51 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
+
+test('patient restores transcript, question and draft, then saves and exits', async () => {
+  const nodes = new Map();
+  function element() {
+    const children = new Map();
+    return { value: '', disabled: false, dataset: {}, style: {}, listeners: {}, appended: [],
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener(name, handler) { this.listeners[name] = handler; },
+      querySelector(selector) { if (!children.has(selector)) children.set(selector, element()); return children.get(selector); },
+      append(child) { this.appended.push(child); }, focus() {}, scrollIntoView() {}, click() { this.clicked = true; },
+    };
+  }
+  const query = selector => { if (!nodes.has(selector)) nodes.set(selector, element()); return nodes.get(selector); };
+  const saved = new Map([['meditrace.intake.patient-1', JSON.stringify({ id: 'saved-1', draft: 'Two days' })]]);
+  const calls = [];
+  const context = vm.createContext({
+    document: { querySelector: query, querySelectorAll: () => [], addEventListener() {}, createElement: element },
+    localStorage: { getItem: key => saved.get(key) || null, setItem: (key, value) => saved.set(key, value), removeItem: key => saved.delete(key) },
+    sessionStorage: { getItem: () => 'token' }, Headers, console, setTimeout: () => 0,
+    window: { lucide: { createIcons() {} } }, lucide: { createIcons() {} },
+    fetch: async (path, options) => {
+      calls.push([path, options?.method || 'GET']);
+      const data = path === '/api/health' ? {} : path === '/api/sessions/saved-1' ? {
+        id: 'saved-1', locale: 'en-IN', triage: { answers: [{ label: 'Main concern', answer: 'Fever' }] },
+      } : path.endsWith('/triage') ? {
+        answered: [{ label: 'Main concern', answer: 'Fever' }], remaining: 2,
+        question: { id: 'duration', text: 'When did it start?', kind: 'text' },
+      } : {};
+      return { ok: path !== '/api/narration', status: 503, json: async () => data };
+    },
+  });
+  const source = (await readFile(new URL('../src/main.js', import.meta.url), 'utf8')).replace("import './style.css';", '').replace('export function startIntake', 'function startIntake');
+  vm.runInContext(source, context);
+  await vm.runInContext("currentUser = { id: 'patient-1', name: 'Test Patient' }; initialise()", context);
+  assert.equal(query('#textInput').value, 'Two days');
+  assert.equal(vm.runInContext('currentQuestion.id', context), 'duration');
+  assert.ok(query('#thread').appended.some(node => node.querySelector('p').textContent === 'Fever'));
+  assert.ok(!calls.some(([path, method]) => path === '/api/sessions' && method === 'POST'));
+  query('#textInput').value = 'Three days';
+  await query('.end-button').listeners.click();
+  assert.equal(JSON.parse(saved.get('meditrace.intake.patient-1')).draft, 'Three days');
+  assert.equal(query('#signOutButton').clicked, true);
+  query('#signOutButton').clicked = false;
+  vm.runInContext('submitting = true', context);
+  await query('.end-button').listeners.click();
+  assert.equal(query('#signOutButton').clicked, false);
+});

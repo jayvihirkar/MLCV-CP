@@ -60,6 +60,14 @@ MLCV-CP/
 
 ## Run locally
 
+### Saving and resuming an intake
+
+- Submitted answers are saved on the server. The browser keeps an account-specific session reference and unfinished typed answer.
+- “End & save later” verifies the saved session and signs the patient out. Recording, transcription, or answer submission must finish first.
+- Signing back in using the same browser restores the recorded responses, next question, summary, and unfinished typed answer. Clearing browser storage removes the resume reference.
+- Sessions created before account ownership was added remain available to clinicians, but cannot be resumed through patient endpoints. New sessions can only be read or changed by their creator through those endpoints.
+- Regression checks: `node --test tests/intake-resume*.test.mjs`.
+
 ### Prerequisites
 
 - Node.js 18 or newer (Node 22 was used during development)

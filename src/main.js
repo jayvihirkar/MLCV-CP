@@ -12,6 +12,11 @@ let session = null;
 let currentQuestion = null;
 let lastQuestionEl = null;
 let submitting = false;
+let transcribing = false;
+const savedIntakeKey = () => `meditrace.intake.${currentUser.id}`;
+function rememberIntake() {
+  if (session && currentUser) localStorage.setItem(savedIntakeKey(), JSON.stringify({ id: session.id, draft: textInput.value }));
+}
 let mediaRecorder;
 let audioChunks = [];
 let isRecording = false;
@@ -219,9 +224,12 @@ async function sendAnswer(raw) {
   try {
     const response = await api(`/api/sessions/${session.id}/turn`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionId: question.id, answer }) });
     const payload = await response.json();
+    rememberIntake();
     renderTriage(payload);
   } catch (error) {
     showToast(error.message);
+    textInput.value = answer;
+    rememberIntake();
     textInput.disabled = false;
     micButton.disabled = false;
     renderChips(question);
@@ -240,9 +248,10 @@ function setRecording(value) {
 }
 
 async function transcribeAudio() {
+  transcribing = true;
   voiceStatus.textContent = strings().transcribing;
   const audio = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-  if (audio.size < 1000) { showToast(strings().voiceError); voiceStatus.textContent = strings().tapToSpeak; return; }
+  if (audio.size < 1000) { transcribing = false; showToast(strings().voiceError); voiceStatus.textContent = strings().tapToSpeak; return; }
   const form = new FormData();
   form.append('audio', audio, 'response.webm');
   form.append('locale', langToLocale[locale] || 'en-IN');
@@ -255,6 +264,7 @@ async function transcribeAudio() {
     if (error.status === 503 || error.status === 501) { sttMode = 'browser'; showToast('Server transcription is unavailable. Switching to your device voice input — tap the microphone again to speak.'); }
     else { showToast(error.message === 'Request failed.' ? strings().voiceError : error.message); }
   } finally {
+    transcribing = false;
     if (!isRecording && escalationBanner && escalationBanner.hidden) voiceStatus.textContent = strings().tapToSpeak;
   }
 }
@@ -314,8 +324,34 @@ async function initialise() {
   applyTranslations();
   detectCapabilities();
   try {
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem(savedIntakeKey()) || 'null'); } catch { localStorage.removeItem(savedIntakeKey()); }
+    if (saved?.id) {
+      try {
+        const response = await api(`/api/sessions/${encodeURIComponent(saved.id)}`);
+        session = await response.json();
+        locale = session.locale.split('-')[0];
+        $('#languageName').textContent = localeNames[locale] || localeNames.en;
+        applyTranslations();
+        for (const answer of session.triage?.answers || session.responses || []) {
+          const question = document.createElement('article');
+          question.className = 'message assistant-message';
+          question.textContent = answer.label || answer.questionId;
+          thread.append(question);
+          addPatientMessage(answer.answer);
+        }
+        await loadTriage();
+        if (!textInput.disabled) textInput.value = saved.draft || '';
+        showToast('Your saved intake has been restored.');
+        return;
+      } catch (error) {
+        if (error.status !== 404) throw error;
+        localStorage.removeItem(savedIntakeKey());
+      }
+    }
     const created = await api('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patient: (currentUser && currentUser.name) || 'Guest patient', locale: langToLocale[locale] }) });
     session = await created.json();
+    rememberIntake();
     await loadTriage();
   } catch (error) {
     showToast(`Could not start intake: ${error.message}`);
@@ -323,6 +359,18 @@ async function initialise() {
 }
 
 micButton.addEventListener('click', toggleRecording);
+textInput.addEventListener('input', rememberIntake);
+document.querySelector('.end-button').addEventListener('click', async () => {
+  if (submitting || isRecording || transcribing) { showToast('Please finish your current response before saving.'); return; }
+  if (!session) { showToast('Your intake has not loaded. Please refresh and try again.'); return; }
+  try {
+    rememberIntake();
+    await api(`/api/sessions/${encodeURIComponent(session.id)}`);
+    if (activeAudio) activeAudio.pause();
+    window.speechSynthesis?.cancel();
+    $('#signOutButton').click();
+  } catch (error) { showToast(`Could not save and exit: ${error.message}`); }
+});
 textForm.addEventListener('submit', (event) => { event.preventDefault(); sendAnswer(textInput.value); });
 document.addEventListener('click', (event) => { const trigger = event.target.closest('.speak-trigger'); if (trigger) playNarration(trigger.dataset.text); });
 quickReplies.addEventListener('click', (event) => {
