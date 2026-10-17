@@ -6,6 +6,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { mockPatients, mockDoctorProfiles } from './mock-data.mjs';
+import { registerProfileRoutes, readPatientProfiles } from './profile.mjs';
+import { addAccountProfile } from './doctor-profile.mjs';
+import { registerConversationRoutes } from './conversations.mjs';
 import { createTriageState, resolveQuestion, finalise, applyAnswer, candidateQuestions, redFlagOptions, flagRedFlags, escalationMessage, questionById } from './triage.mjs';
 import { geminiConfigured, analyseTurn, transcribeWithGemini, geminiSttModel } from './llm.mjs';
 
@@ -102,6 +105,8 @@ function requireDoctor(req, res, next) {
 const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 app.use(express.json({ limit: '200kb' }));
+const profileService = registerProfileRoutes(app, { authenticate, file: join(root, 'data', 'profiles.json'), readSessions, readReviews, writeReviews });
+const conversationService = registerConversationRoutes(app, { authenticate, file: join(root, 'data', 'chat-settings.json'), readSessions });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, elevenLabsConfigured: Boolean(process.env.ELEVENLABS_API_KEY), geminiConfigured: geminiConfigured(), sttModel: geminiSttModel(), googleConfigured: googleConfigured(), voiceId: voiceId() }));
 
@@ -199,12 +204,14 @@ app.delete('/api/sessions/:id', authenticate, async (req, res, next) => {
     const sessions = await readSessions();
     const index = sessions.findIndex((session) => session.id === req.params.id && session.userId === req.user.userId);
     if (index === -1) return res.status(404).json({ error: 'Intake session not found.' });
+    if (req.query.onlyIfEmpty === '1' && ((sessions[index].triage?.answers?.length || 0) > 0 || (sessions[index].responses?.length || 0) > 0)) return res.json({ ok: true, deleted: false });
     const reviews = await readReviews();
     delete reviews[`INTAKE-${String(sessions[index].id).slice(0, 8)}`];
     sessions.splice(index, 1);
     await writeSessions(sessions);
     await writeReviews(reviews);
-    res.json({ ok: true });
+    await conversationService.forget(req.user.userId, req.params.id);
+    res.json({ ok: true, deleted: true });
   } catch (error) { next(error); }
 });
 
@@ -560,8 +567,8 @@ function realRecord(session) {
   };
 }
 
-function buildRecordIndex(sessions) {
-  return [...mockPatients.map(mockRecord), ...sessions.map(realRecord)];
+function buildRecordIndex(sessions, profiles = {}) {
+  return [...mockPatients.map(mockRecord), ...sessions.map(session => addAccountProfile(realRecord(session), session, profiles, sessions))];
 }
 
 function emptyReview(id) { return { patientId: id, sections: {}, decision: null, note: '', updatedAt: null, approvedAt: null }; }
@@ -589,13 +596,15 @@ function toQueueItem(record, reviews) {
     highFlag,
     decision,
     documents: record.documents,
+    clarificationPending: (record.clarifications || []).filter(thread => thread.status === 'awaiting_patient').length,
+    clarificationAnswered: (record.clarifications || []).filter(thread => thread.status === 'awaiting_doctor').length,
   };
 }
 
 app.get('/api/doctor/overview', authenticate, requireDoctor, async (_req, res, next) => {
   try {
-    const [sessions, reviews] = await Promise.all([readSessions(), readReviews()]);
-    const records = buildRecordIndex(sessions);
+    const [sessions, reviews, profiles] = await Promise.all([readSessions(), readReviews(), readPatientProfiles(join(root, 'data', 'profiles.json'))]);
+    const records = buildRecordIndex(sessions, profiles);
     const queue = records.map((record) => toQueueItem(record, reviews)).sort((a, b) => new Date(a.appointment) - new Date(b.appointment));
     const stats = {
       total: queue.length,
@@ -611,8 +620,8 @@ app.get('/api/doctor/overview', authenticate, requireDoctor, async (_req, res, n
 
 app.get('/api/doctor/patients/:id', authenticate, requireDoctor, async (req, res, next) => {
   try {
-    const [sessions, reviews] = await Promise.all([readSessions(), readReviews()]);
-    const record = buildRecordIndex(sessions).find((item) => item.id === req.params.id);
+    const [sessions, reviews, profiles] = await Promise.all([readSessions(), readReviews(), readPatientProfiles(join(root, 'data', 'profiles.json'))]);
+    const record = buildRecordIndex(sessions, profiles).find((item) => item.id === req.params.id);
     if (!record) return res.status(404).json({ error: 'Patient record not found.' });
     const review = reviews[record.id] || emptyReview(record.id);
     record.summary.sections = record.summary.sections.map((section) => ({ ...section, review: review.sections?.[section.id] || { status: 'pending', doctorText: null, updatedAt: null } }));
@@ -648,6 +657,14 @@ app.post('/api/doctor/patients/:id/decision', authenticate, requireDoctor, async
   try {
     const action = String(req.body.action || '');
     if (!['draft', 'approve', 'clarification'].includes(action)) return res.status(400).json({ error: 'Unsupported review action.' });
+    const session = (await readSessions()).find(item => `INTAKE-${String(item.id).slice(0, 8)}` === req.params.id);
+    const known = session || mockPatients.some(item => item.id === req.params.id);
+    if (!known) return res.status(404).json({ error: 'Patient record not found.' });
+    if (action === 'clarification') {
+      if (!session?.userId) return res.status(400).json({ error: 'Clarifications can be sent only to an account-linked recorded patient.' });
+      await profileService.ask({ userId: session.userId, recordId: req.params.id, target: req.body.target || { type: 'intake', id: session.id }, threadId: req.body.threadId, question: req.body.note, doctor: req.user });
+    }
+    if (action === 'approve' && session?.userId) await profileService.approve({ userId: session.userId, recordId: req.params.id, doctor: req.user, note: req.body.note });
     const reviews = await readReviews();
     const review = reviews[req.params.id] || emptyReview(req.params.id);
     review.sections = review.sections || {};
@@ -656,6 +673,7 @@ app.post('/api/doctor/patients/:id/decision', authenticate, requireDoctor, async
     if (action === 'approve') {
       review.decision = 'approved';
       review.approvedAt = review.updatedAt;
+      review.approvedBy = { id: req.user.userId, name: req.user.name };
       for (const section of Object.values(review.sections)) section.status = 'reviewed';
     } else if (action === 'clarification') {
       review.decision = 'clarification_requested';
@@ -667,7 +685,24 @@ app.post('/api/doctor/patients/:id/decision', authenticate, requireDoctor, async
     reviews[req.params.id] = review;
     await writeReviews(reviews);
     res.json({ review });
+  } catch (error) { if (error.status) res.status(error.status).json({ error: error.message }); else next(error); }
+});
+
+app.get('/api/doctor/patients/:id/clarifications', authenticate, requireDoctor, async (req, res, next) => {
+  try {
+    const session = (await readSessions()).find(item => `INTAKE-${String(item.id).slice(0, 8)}` === req.params.id);
+    if (!session?.userId) return res.json({ threads: [] });
+    const profiles = await readPatientProfiles(join(root, 'data', 'profiles.json'));
+    res.json({ threads: profiles[session.userId]?.clarifications || [] });
   } catch (error) { next(error); }
+});
+app.post('/api/doctor/patients/:id/clarifications/:threadId/approve', authenticate, requireDoctor, async (req, res, next) => {
+  try {
+    const session = (await readSessions()).find(item => `INTAKE-${String(item.id).slice(0, 8)}` === req.params.id);
+    if (!session?.userId) return res.status(404).json({ error: 'Patient record not found.' });
+    await profileService.approve({ userId: session.userId, threadId: req.params.threadId, doctor: req.user });
+    res.json({ ok: true });
+  } catch (error) { if (error.status) res.status(error.status).json({ error: error.message }); else next(error); }
 });
 
 app.use((error, _req, res, _next) => { console.error(error); res.status(500).json({ error: 'The local server could not complete that request.' }); });
