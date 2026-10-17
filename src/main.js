@@ -181,6 +181,9 @@ function renderQuestion(question, { append = true } = {}) {
 }
 
 function renderTriage(payload) {
+  $('#intakeReview').hidden = true;
+  thread.hidden = false;
+  voiceDock.hidden = false;
   renderSteps(payload.escalated ? intakeStep : payload.step || (payload.complete ? 4 : payload.question?.phase === 'history' ? 3 : 2));
   renderSummaryItems(payload.answered);
   const answeredCount = (payload.answered || []).length;
@@ -193,7 +196,7 @@ function renderTriage(payload) {
 
   if (payload.escalated) { showEscalation(payload); return; }
   if (escalationBanner) escalationBanner.hidden = true;
-  if (payload.complete) { finishIntake(); return; }
+  if (payload.complete) { finishIntake(payload.answered || []); return; }
   voiceDock.classList.remove('complete');
   renderQuestion(payload.question);
 }
@@ -219,14 +222,23 @@ function showEscalation(payload) {
   escalationBanner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-function finishIntake() {
+function finishIntake(answers = []) {
+  currentQuestion = null;
+  textInput.value = '';
+  rememberIntake();
   voiceDock.classList.add('complete');
   voiceStatus.textContent = strings().ready;
   micButton.disabled = true;
   textInput.disabled = true;
   if (quickReplies) { quickReplies.hidden = true; quickReplies.innerHTML = ''; }
   if (escalationBanner) escalationBanner.hidden = true;
-  addAssistantMessage(strings().completeReply);
+  $('#intakeReview').hidden = false;
+  $('#reviewAnswers').innerHTML = answers.map((answer, index) => `<article class="summary-item"><span>${index + 1}</span><div><small>${escapeHtml(answer.label)}</small><p>${escapeHtml(answer.answer)}</p></div></article>`).join('');
+  thread.hidden = true;
+  voiceDock.hidden = true;
+  $('.intro-row').hidden = true;
+  $('#progressBar').style.width = '100%';
+  $('#intakeReview').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 async function sendAnswer(raw) {
@@ -390,6 +402,33 @@ async function initialise() {
 }
 
 micButton.addEventListener('click', toggleRecording);
+$('#viewConversation').addEventListener('click', () => {
+  thread.hidden = !thread.hidden;
+  $('#viewConversation').textContent = thread.hidden ? 'View conversation' : 'Hide conversation';
+});
+$('#startNewIntake').addEventListener('click', async () => {
+  const button = $('#startNewIntake');
+  if (button.disabled || submitting || isRecording || transcribing) return;
+  rememberIntake();
+  button.disabled = true;
+  submitting = true;
+  try {
+    const response = await api('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patient: currentUser.name, locale: langToLocale[locale] || 'en-IN' }) });
+    session = await response.json();
+    voiceEnabled = false;
+    if (activeAudio) activeAudio.pause();
+    window.speechSynthesis?.cancel();
+    thread.innerHTML = '';
+    lastQuestionEl = null;
+    textInput.value = '';
+    rememberIntake();
+    $('#viewConversation').textContent = 'View conversation';
+    $('.intro-row').hidden = false;
+    renderSteps(2);
+    await loadTriage();
+  } catch (error) { showToast(`Could not start a new intake: ${error.message}`); }
+  finally { button.disabled = false; submitting = false; }
+});
 textInput.addEventListener('input', rememberIntake);
 document.querySelector('.end-button').addEventListener('click', async () => {
   if (submitting || isRecording || transcribing) { showToast('Please finish your current response before saving.'); return; }

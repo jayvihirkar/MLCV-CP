@@ -204,3 +204,7 @@ Signing in with a clinician account opens a separate, doctor-facing interface. T
 ## Safety and scope note
 
 This is a UI prototype only. It should not be treated as a medical device, diagnostic tool, or production health-record system. Any real deployment needs appropriate clinical review, privacy/security design, consent management, and compliance work.
+
+## Completed intake review
+
+Completed intakes show a review screen with saved answers. Patients can view their conversation or start another intake from this screen. Starting another intake retains the previous server record.

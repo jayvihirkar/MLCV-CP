@@ -26,7 +26,7 @@ test('patient restores transcript, question and draft, then saves and exits', as
     window: { lucide: { createIcons() {} } }, lucide: { createIcons() {} },
     fetch: async (path, options) => {
       calls.push([path, options?.method || 'GET']);
-      const data = path === '/api/health' ? {} : path === '/api/sessions/saved-1' ? {
+      const data = path === '/api/sessions' && options?.method === 'POST' ? { id: 'new-1', locale: 'en-IN' } : path === '/api/health' ? {} : path === '/api/sessions/saved-1' ? {
         id: 'saved-1', locale: 'en-IN', transcript: [{ questionText: 'What is bothering you today?', label: 'Main concern', answer: 'Fever' }],
       } : path.endsWith('/triage') ? {
         answered: [{ label: 'Main concern', answer: 'Fever' }], remaining: 2,
@@ -66,4 +66,16 @@ test('patient restores transcript, question and draft, then saves and exits', as
   vm.runInContext("renderTriage({ step: 4, complete: true, answered: [] })", context);
   assert.equal(steps[2].className, 'step complete');
   assert.equal(steps[3]['aria-current'], 'step');
+  assert.equal(query('#intakeReview').hidden, false);
+  assert.equal(query('#thread').hidden, true);
+  assert.equal(query('#voiceDock').hidden, true);
+  query('#viewConversation').listeners.click();
+  assert.equal(query('#thread').hidden, false);
+  vm.runInContext('submitting = false', context);
+  await query('#startNewIntake').listeners.click();
+  assert.equal(query('#intakeReview').hidden, true);
+  assert.equal(query('#voiceDock').hidden, false);
+  assert.equal(vm.runInContext('intakeStep', context), 2);
+  assert.equal(JSON.parse(saved.get('meditrace.intake.patient-1')).id, 'new-1');
+  assert.equal(vm.runInContext('voiceEnabled', context), false);
 });
