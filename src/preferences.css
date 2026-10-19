@@ -7,11 +7,11 @@ body.authenticated :is(button,input,select,textarea){font-family:var(--reading-f
 html:not([data-reading-font=default]) body.authenticated :where(*){font-family:var(--reading-font)!important}
 html[data-appearance=dark]{color-scheme:dark;--ink:#e5ede9;--muted:#a8bcb2;--line:#35483e;--teal:#83d8c2;--teal-deep:#83d8c2;--aqua:#274c40;--cream:#17251f;--panel:#20332a}
 html[data-appearance=dark] body.authenticated{background:#14211b;color:#e5ede9}
-html[data-appearance=dark] body.authenticated :is(.app-shell,.workspace,.voice-dock,.dc-app,.dc-main,.dc-content){background:#17251f;color:#e5ede9}
-html[data-appearance=dark] body.authenticated :is(.side-panel,.dc-sidebar,.dc-topbar,header){background:#14211b;color:#e5ede9;border-color:#35483e}
-html[data-appearance=dark] body.authenticated :is(dialog,.patient-menu,.sidebar-row-menu,.language-menu,.dc-card,.dc-modal,.dc-drawer,.patient-card,.intake-review,.preferences-dialog){background:#20332a!important;color:#e5ede9!important;border-color:#405b4d!important}
-html[data-appearance=dark] body.authenticated :is(input,select,textarea,.text-entry,.quick-chip,.time-pill,.preferences-preview,.privacy-note,.attachment-card,.clarification-panel){background:#263c31!important;color:#e5ede9!important;border-color:#4c6859!important}
-html[data-appearance=dark] body.authenticated :is(h1,h2,h3,h4,p,span,small,label,strong,b,time,a,button){color:inherit}
+html[data-appearance=dark] body.authenticated :is(.app-shell,.workspace,.voice-dock){background:#17251f;color:#e5ede9}
+html[data-appearance=dark] body.authenticated :is(.side-panel,header){background:#14211b;color:#e5ede9;border-color:#35483e}
+html[data-appearance=dark] body.authenticated :is(dialog,.patient-menu,.sidebar-row-menu,.language-menu,.patient-card,.intake-review,.preferences-dialog){background:#20332a!important;color:#e5ede9!important;border-color:#405b4d!important}
+html[data-appearance=dark] body.authenticated :is(input:where(:not(.doctor-root *)),select:where(:not(.doctor-root *)),textarea:where(:not(.doctor-root *)),.text-entry,.quick-chip,.time-pill,.preferences-preview,.privacy-note,.attachment-card,.clarification-panel){background:#263c31!important;color:#e5ede9!important;border-color:#4c6859!important}
+html[data-appearance=dark] body.authenticated:not(.is-doctor) :is(h1,h2,h3,h4,p,span,small,label,strong,b,time,a,button){color:inherit}
 html[data-appearance=dark] body.authenticated :is(.message-meta,.sidebar-chat-open small,.eyebrow,.crumb,.preferences-note,.profile-event-meta,.listening-label,.sidebar-status){color:#adbbaf}
 html[data-appearance=dark] body.authenticated :is(.sidebar-chat-row:hover,.sidebar-chat-row.active,.patient-menu button:hover,.sidebar-row-menu button:hover,.quick-chip:hover){background:#2d493b;color:#eff8f1}
 html[data-appearance=dark] body.authenticated :is(.user-message,.patient-message) .message-body{background:#235443;color:#f0fff7}
@@ -20,3 +20,17 @@ html[data-appearance=dark] body.authenticated input::placeholder,html[data-appea
 html[data-appearance=dark] body.authenticated :is(.profile-form,.profile-event,.text-entry,.voice-dock,header){border-color:#405b4d}
 html[data-appearance=dark] body.authenticated .escalation-banner{background:#432d24;color:#ffe6cf;border-color:#896148}
 html[data-appearance=dark] body.authenticated .assistant-avatar{background:#2e4f40;color:#b6f0d9}
+
+/* Shared details used by both portals. */
+html[data-appearance=dark] body.authenticated :is(.clarification-thread,.clarification-message,.patient-clarification-alert,.summary-tip){background:#403322;border-color:#75603a;color:#f2cd84}
+html[data-appearance=dark] body.authenticated :is(.attachment-list li,.clarification-message.patient-answer,.conversation-clarification-context,.summary-item,.saved-conversation){background:#263c31;border-color:#4c6859;color:#e5ede9}
+html[data-appearance=dark] body.authenticated :is(.attachment-button,.clarification-chat-icon){background:#244b3f;border-color:#4c6859;color:#a0e5d2}
+html[data-appearance=dark] body.authenticated .clarification-chat-icon.needs-answer{background:#403322;border-color:#75603a;color:#f2cd84}
+html[data-appearance=dark] body.authenticated :is(.attachment-name,.attachment-name small,.selected-history-files,.clarification-message small,.clarification-state){color:inherit}
+html[data-appearance=dark] body.authenticated .attachment-remove{color:#ffb4ab}
+html[data-appearance=dark] body.authenticated :is(.patient-support-panel,.summary-panel){background:#17251f;border-color:#35483e}
+html[data-appearance=dark] body.authenticated:not(.is-doctor) .voice-dock{background:#17251f;border-color:#35483e}
+html[data-appearance=dark] body.authenticated :is(.summary-item>span,.empty-icon,.summary-progress){background:#244b3f;color:#a0e5d2}
+html[data-appearance=dark] body.authenticated .quick-chip:is(.multi.selected,.quick-chip-send){background:#83d8c2!important;color:#102a20!important;border-color:#83d8c2!important}
+html[data-appearance=dark] .doctor-root .dc-clarify-target{background:var(--dc-field);border-color:var(--dc-line);color:var(--dc-ink)}
+html[data-appearance=dark] .doctor-root .clarification-thread textarea{background:var(--dc-field);border-color:var(--dc-line);color:var(--dc-ink)}

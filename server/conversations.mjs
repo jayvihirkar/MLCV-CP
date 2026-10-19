@@ -1,8 +1,8 @@
-import { readFile, writeFile, rename } from 'node:fs/promises';
+import { readJson, writeJson } from './persistence.mjs';
 import { randomUUID } from 'node:crypto';
 
 export function registerConversationRoutes(app, { authenticate, file, readSessions }) {
-  async function read() { try { return JSON.parse(await readFile(file, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return {}; throw error; } }
+  async function read() { return readJson(file, {}); }
   let pending = Promise.resolve();
   function update(userId, change) {
     const operation = pending.then(async () => {
@@ -10,8 +10,7 @@ export function registerConversationRoutes(app, { authenticate, file, readSessio
       const settings = accounts[userId] || { groups: [], chats: {}, order: [], returning: false };
       const result = change(settings);
       accounts[userId] = settings;
-      await writeFile(`${file}.tmp`, JSON.stringify(accounts, null, 2) + '\n');
-      await rename(`${file}.tmp`, file);
+      await writeJson(file, accounts);
       return result;
     });
     pending = operation.catch(() => {});
