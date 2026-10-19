@@ -9,3 +9,4 @@ data/profiles.json.tmp
 data/attachments/
 data/chat-settings.json
 data/chat-settings.json.tmp
+data/*.tmp
