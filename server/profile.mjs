@@ -1,14 +1,12 @@
-import { readFile, writeFile, rename } from 'node:fs/promises';
+import { readJson, writeJson } from './persistence.mjs';
+import { supabaseConfigured, signedDownload } from './supabase.mjs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { receiveAttachments, storeAttachments, removeAttachments } from './attachments.mjs';
+import { receiveAttachments, storeAttachments, removeAttachments, registerAttachmentUploads, resolveUploadedAttachments } from './attachments.mjs';
 
 const kinds = ['condition', 'surgery', 'hospitalization', 'medication', 'allergy', 'vaccination', 'test', 'visit', 'other'];
 const text = (value, limit) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
-export async function readPatientProfiles(file) {
-  try { return JSON.parse(await readFile(file, 'utf8')); }
-  catch (error) { if (error.code === 'ENOENT') return {}; throw error; }
-}
+export async function readPatientProfiles(file) { return readJson(file, {}); }
 export function accountTimeline(profile, sessions, userId) {
   const intakes = sessions.filter(session => session.userId === userId && (session.triage?.answers?.length || session.responses?.length));
   const timeline = [
@@ -31,6 +29,7 @@ export function validHistoryDate(value) {
 }
 
 export function registerProfileRoutes(app, { authenticate, file, readSessions, readReviews, writeReviews }) {
+  registerAttachmentUploads(app, authenticate);
   const attachmentDirectory = join(dirname(file), 'attachments');
   const readProfiles = () => readPatientProfiles(file);
   // Serialize updates so saves from different tabs/accounts cannot overwrite one another.
@@ -42,8 +41,7 @@ export function registerProfileRoutes(app, { authenticate, file, readSessions, r
       const result = change(profile);
       profile.updatedAt = new Date().toISOString();
       profiles[userId] = profile;
-      await writeFile(`${file}.tmp`, JSON.stringify(profiles, null, 2) + '\n');
-      await rename(`${file}.tmp`, file);
+      await writeJson(file, profiles);
       return result;
     });
     pending = operation.catch(() => {});
@@ -149,7 +147,8 @@ export function registerProfileRoutes(app, { authenticate, file, readSessions, r
       const input = req.body || {};
       const event = { title: text(input.title, 200), date: text(input.date, 10), kind: text(input.kind, 30), notes: text(input.notes, 3000) };
       if (!event.title || !kinds.includes(event.kind) || !validHistoryDate(event.date)) return res.status(400).json({ error: 'Add a title, choose a category, and enter a date as YYYY, YYYY-MM, or YYYY-MM-DD (or leave it blank).' });
-      stored = await storeAttachments(req.files || [], attachmentDirectory);
+      const files = req.body?.attachmentIds?.length ? await resolveUploadedAttachments(req.body.attachmentIds, req.user.userId) : req.files || [];
+      stored = await storeAttachments(files, attachmentDirectory);
       const result = await update(req.user.userId, profile => {
         if (req.params.id) {
           const existing = profile.history.find(item => item.id === req.params.id);
@@ -174,6 +173,7 @@ export function registerProfileRoutes(app, { authenticate, file, readSessions, r
       if (!attachment) return res.status(404).json({ error: 'Attachment not found.' });
       res.set('Cache-Control', 'private, no-store');
       res.set('X-Content-Type-Options', 'nosniff');
+      if (supabaseConfigured()) return res.redirect(302, await signedDownload(attachment.id));
       res.type(attachment.mimeType);
       res.download(join(attachmentDirectory, attachment.id), attachment.name, error => { if (error && !res.headersSent) res.status(error.code === 'ENOENT' ? 404 : 500).json({ error: 'Attachment file could not be downloaded.' }); });
     } catch (error) { next(error); }

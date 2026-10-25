@@ -1,10 +1,11 @@
+import './environment.mjs';
+import { readJson, writeJson, persistenceScope, persistenceMiddleware, putRecord, getRecord, takeRecord, deleteRecord } from './persistence.mjs';
+import { supabaseConfigured } from './supabase.mjs';
 import express from 'express';
 import multer from 'multer';
-import { readFile, writeFile, mkdir, access } from 'node:fs/promises';
-import { constants } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 import { mockPatients, mockDoctorProfiles } from './mock-data.mjs';
 import { registerProfileRoutes, readPatientProfiles } from './profile.mjs';
 import { addAccountProfile } from './doctor-profile.mjs';
@@ -19,31 +20,25 @@ const reviewsFile = join(root, 'data', 'reviews.json');
 const defaultVoiceId = 'EXAVITQu4vr4xnSDxMaL';
 const voiceId = () => process.env.ELEVENLABS_VOICE_ID || defaultVoiceId;
 const tokenTtl = 1000 * 60 * 60 * 8;
-const authTokens = new Map();
-const googleStates = new Map();
+const tokenKey = token => createHash('sha256').update(token).digest('hex');
 const googleConfigured = () => Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 function googleRedirectUri(req) { return process.env.GOOGLE_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/auth/google/callback`; }
 
-function loadEnvironment() {
-  try {
-    const values = readFile(join(root, '.env'), 'utf8');
-    return values.then((content) => {
-      for (const line of content.split(/\r?\n/)) {
-        const match = line.match(/^\s*([^#=\s]+)\s*=\s*(.*)\s*$/);
-        if (match && !process.env[match[1]]) process.env[match[1]] = match[2].replace(/^['"]|['"]$/g, '');
+let ready;
+function initialize() {
+  if (!ready) ready = persistenceScope(async () => {
+    const cloud = supabaseConfigured();
+    if (process.env.SEED_DEMO_USERS === 'true' || (!cloud && process.env.SEED_DEMO_USERS !== 'false')) {
+      for (let attempt = 0; ; attempt++) {
+        try { await ensureUsers(); break; }
+        catch (error) { if (error.status !== 409 || attempt >= 2) throw error; }
       }
-    }).catch(() => {});
-  } catch { return Promise.resolve(); }
+    }
+  }).catch(error => { ready = null; throw error; });
+  return ready;
 }
-
-await loadEnvironment();
-await mkdir(dirname(dataFile), { recursive: true });
-try { await access(dataFile, constants.F_OK); } catch { await writeFile(dataFile, '[]\n'); }
-try { await access(reviewsFile, constants.F_OK); } catch { await writeFile(reviewsFile, '{}\n'); }
-await ensureUsers();
-
-async function readSessions() { return JSON.parse(await readFile(dataFile, 'utf8')); }
-async function writeSessions(sessions) { await writeFile(dataFile, `${JSON.stringify(sessions, null, 2)}\n`); }
+async function readSessions() { return readJson(dataFile, []); }
+async function writeSessions(sessions) { await writeJson(dataFile, sessions); }
 function findSession(sessions, id) { return sessions.find((session) => session.id === id); }
 
 function hashPassword(password, salt) { return scryptSync(password, salt, 64).toString('hex'); }
@@ -53,12 +48,11 @@ function verifyPassword(password, user) {
   const expected = Buffer.from(user.passwordHash, 'hex');
   return candidate.length === expected.length && timingSafeEqual(candidate, expected);
 }
-async function readUsers() { return JSON.parse(await readFile(usersFile, 'utf8')); }
-async function writeUsers(users) { await writeFile(usersFile, `${JSON.stringify(users, null, 2)}\n`); }
+async function readUsers() { return readJson(usersFile, []); }
+async function writeUsers(users) { await writeJson(usersFile, users); }
 
 async function ensureUsers() {
-  let users = [];
-  try { users = JSON.parse(await readFile(usersFile, 'utf8')); } catch {}
+  let users = await readUsers();
   if (!Array.isArray(users)) users = [];
   const seeds = [
     { name: 'Ramesh Patel', email: 'ramesh.patel@example.com', role: 'Patient' },
@@ -68,15 +62,15 @@ async function ensureUsers() {
   for (const seed of seeds) {
     if (users.some((entry) => String(entry.email).toLowerCase() === seed.email.toLowerCase())) continue;
     const salt = randomBytes(16).toString('hex');
-    users.push({ id: randomUUID(), ...seed, salt, passwordHash: hashPassword('meditrace123', salt), createdAt: new Date().toISOString() });
+    users.push({ id: `seed-${tokenKey(seed.email).slice(0, 32)}`, ...seed, salt, passwordHash: hashPassword('meditrace123', salt), createdAt: new Date().toISOString() });
     changed = true;
   }
   if (changed || !users.length) await writeUsers(users);
 }
 
-function issueToken(user) {
+async function issueToken(user) {
   const token = `${randomUUID()}${randomUUID()}`.replace(/-/g, '');
-  authTokens.set(token, { userId: user.id, name: user.name, email: user.email, role: user.role, specialty: user.specialty || null, expiresAt: Date.now() + tokenTtl });
+  await putRecord('auth-tokens', tokenKey(token), { userId: user.id, name: user.name, email: user.email, role: user.role, specialty: user.specialty || null, expiresAt: Date.now() + tokenTtl });
   return token;
 }
 
@@ -85,11 +79,11 @@ function readToken(req) {
   return header.startsWith('Bearer ') ? header.slice(7).trim() : '';
 }
 
-function authenticate(req, res, next) {
+async function authenticate(req, res, next) {
   const token = readToken(req);
-  const record = token && authTokens.get(token);
+  const record = token && await getRecord('auth-tokens', tokenKey(token));
   if (!record || record.expiresAt < Date.now()) {
-    if (record) authTokens.delete(token);
+    if (record) await deleteRecord('auth-tokens', tokenKey(token));
     return res.status(401).json({ error: 'Your session has expired. Please sign in again.' });
   }
   req.user = record;
@@ -103,12 +97,16 @@ function requireDoctor(req, res, next) {
 }
 
 const app = express();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+app.set('trust proxy', 1);
+app.use(persistenceMiddleware);
+app.use(async (_req, _res, next) => { await initialize(); next(); });
+app.use('/api', (_req, res, next) => { res.set('Cache-Control', 'private, no-store'); next(); });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024 } });
 app.use(express.json({ limit: '200kb' }));
 const profileService = registerProfileRoutes(app, { authenticate, file: join(root, 'data', 'profiles.json'), readSessions, readReviews, writeReviews });
 const conversationService = registerConversationRoutes(app, { authenticate, file: join(root, 'data', 'chat-settings.json'), readSessions });
 
-app.get('/api/health', (_req, res) => res.json({ ok: true, elevenLabsConfigured: Boolean(process.env.ELEVENLABS_API_KEY), geminiConfigured: geminiConfigured(), sttModel: geminiSttModel(), googleConfigured: googleConfigured(), voiceId: voiceId() }));
+app.get('/api/health', (_req, res) => res.json({ ok: true, persistence: supabaseConfigured() ? 'supabase' : 'local', directUploads: supabaseConfigured(), maxAudioBytes: 4 * 1024 * 1024, elevenLabsConfigured: Boolean(process.env.ELEVENLABS_API_KEY), geminiConfigured: geminiConfigured(), sttModel: geminiSttModel(), googleConfigured: googleConfigured(), voiceId: voiceId() }));
 
 app.get('/api/auth/providers', (_req, res) => res.json({ google: googleConfigured() }));
 
@@ -119,18 +117,19 @@ app.post('/api/auth/login', async (req, res, next) => {
     if (!email || !password) return res.status(400).json({ error: 'Please enter your email and password.' });
     const user = (await readUsers()).find((entry) => entry.email.toLowerCase() === email);
     if (!user || !user.passwordHash || !verifyPassword(password, user)) return res.status(401).json({ error: 'The email or password you entered is incorrect.' });
-    res.json({ token: issueToken(user), user: publicUser(user) });
+    res.json({ token: await issueToken(user), user: publicUser(user) });
   } catch (error) { next(error); }
 });
 
 app.get('/api/auth/session', authenticate, (req, res) => res.json({ user: { id: req.user.userId, name: req.user.name, email: req.user.email, role: req.user.role, specialty: req.user.specialty || null } }));
 
-app.post('/api/auth/logout', authenticate, (req, res) => { authTokens.delete(req.token); res.json({ ok: true }); });
+app.post('/api/auth/logout', authenticate, async (req, res) => { await deleteRecord('auth-tokens', tokenKey(req.token)); res.json({ ok: true }); });
 
-app.get('/api/auth/google', (req, res) => {
+app.get('/api/auth/google', async (req, res) => {
   if (!googleConfigured()) return res.status(503).json({ error: 'Google sign-in is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env.' });
   const state = randomUUID().replace(/-/g, '');
-  googleStates.set(state, Date.now() + 10 * 60 * 1000);
+  await putRecord('oauth-states', state, { expiresAt: Date.now() + 10 * 60 * 1000 });
+  res.cookie('meditrace.oauth-state', state, { httpOnly: true, secure: req.secure, sameSite: 'lax', maxAge: 10 * 60 * 1000, path: '/api/auth/google' });
   const params = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID, redirect_uri: googleRedirectUri(req), response_type: 'code', scope: 'openid email profile', state, access_type: 'online', prompt: 'select_account' });
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
 });
@@ -140,9 +139,11 @@ app.get('/api/auth/google/callback', async (req, res, next) => {
     if (!googleConfigured()) return res.status(503).send('Google sign-in is not configured.');
     const { code, state, error } = req.query;
     if (error) return res.redirect('/?auth_error=google');
-    const validState = state && googleStates.get(String(state));
-    if (!validState || validState < Date.now()) return res.redirect('/?auth_error=google');
-    googleStates.delete(String(state));
+    const cookieState = (req.headers.cookie || '').split(';').map(value => value.trim()).find(value => value.startsWith('meditrace.oauth-state='))?.split('=')[1];
+    if (!state || cookieState !== state) return res.redirect('/?auth_error=google');
+    const validState = await takeRecord('oauth-states', String(state));
+    res.clearCookie('meditrace.oauth-state', { path: '/api/auth/google' });
+    if (!validState || validState.expiresAt < Date.now()) return res.redirect('/?auth_error=google');
     if (!code) return res.redirect('/?auth_error=google');
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
@@ -163,7 +164,7 @@ app.get('/api/auth/google/callback', async (req, res, next) => {
       users.push(user);
       await writeUsers(users);
     }
-    res.redirect(`/?auth_token=${encodeURIComponent(issueToken(user))}`);
+    res.redirect(`/?auth_token=${encodeURIComponent(await issueToken(user))}`);
   } catch (error) { next(error); }
 });
 
@@ -383,13 +384,8 @@ app.post('/api/transcribe', authenticate, upload.single('audio'), async (req, re
 // Clinician (doctor) workspace API
 // ---------------------------------------------------------------------------
 
-async function readReviews() {
-  try {
-    const parsed = JSON.parse(await readFile(reviewsFile, 'utf8'));
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch { return {}; }
-}
-async function writeReviews(reviews) { await writeFile(reviewsFile, `${JSON.stringify(reviews, null, 2)}\n`); }
+async function readReviews() { return readJson(reviewsFile, {}); }
+async function writeReviews(reviews) { await writeJson(reviewsFile, reviews); }
 
 function todayAt(time, dayOffset = 0) {
   const base = new Date();
@@ -705,10 +701,18 @@ app.post('/api/doctor/patients/:id/clarifications/:threadId/approve', authentica
   } catch (error) { if (error.status) res.status(error.status).json({ error: error.message }); else next(error); }
 });
 
-app.use((error, _req, res, _next) => { console.error(error); res.status(500).json({ error: 'The local server could not complete that request.' }); });
+app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found.' }));
+app.use((error, _req, res, _next) => {
+  const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : error.status || 500;
+  if (status >= 500) console.error('API request failed:', error.code || error.name);
+  res.status(status).json({ error: error.code === 'LIMIT_FILE_SIZE' ? 'Audio must be 4 MB or smaller. Record a shorter answer or type your response.' : status < 500 || status === 503 ? error.message : 'The server could not complete that request.' });
+});
 
 const dist = join(root, 'dist');
 app.use(express.static(dist));
 app.use((_req, res) => res.sendFile(join(dist, 'index.html')));
 const port = process.env.PORT || 3001;
-app.listen(port, () => console.log(`MediTrace API listening on http://localhost:${port}`));
+if (!process.env.VERCEL && process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  app.listen(port, () => console.log(`MediTrace API listening on http://localhost:${port}`));
+}
+export default app;

@@ -1,10 +1,63 @@
 # MediTrace Voice Intake - Handover
 
+## Supabase and Vercel update (19 October 2026)
+
+The app can now run with Supabase Postgres and private Supabase Storage. Existing patient/doctor password login and Google OAuth remain application-managed; this change does not use Supabase Auth. Without cloud credentials, local development still uses JSON files and local attachments. On Vercel, missing or partial Supabase configuration fails explicitly instead of writing ephemeral files.
+
+### Configure Supabase
+
+1. Create a Supabase project and run `supabase/schema.sql` in its SQL Editor. This creates `app_records`, the transactional update/one-time ticket functions, and the private `meditrace-attachments` bucket with a 10 MB per-file limit. RLS is enabled; database access and function execution are granted only to the server service role. No browser access policies are required.
+2. Add the following server-only values to `.env` (see `.env.example`):
+
+   `SUPABASE_URL=https://YOUR_PROJECT.supabase.co`
+
+   `SUPABASE_SERVICE_ROLE_KEY=YOUR_LEGACY_SERVICE_ROLE_JWT`
+
+   `SUPABASE_STORAGE_BUCKET=meditrace-attachments`
+
+   Use the legacy **service_role** JWT from Supabase's API key settings, not the anon/publishable key. Do not use a `VITE_` prefix. The browser receives only scoped upload/download URLs, never this key. If changing the bucket name, create an equivalent private bucket with the same size limit.
+3. For existing local accounts/data, run `npm run db:migrate` before enabling cloud demo seeding. The migration imports users (with their existing IDs/password hashes), intakes, reviews, profiles/history/clarifications, chat organization, and attachment files. It adds missing records and preserves existing cloud records and local files. It rejects duplicate account emails with different IDs; use an empty project for an initial migration. It can resume interrupted file imports without overwriting different bytes. Existing browser login tokens must sign in again.
+4. For a fresh demonstration project without a migration, set `SEED_DEMO_USERS=true` to create the documented demo accounts on the first API request. Cloud mode leaves these accounts unseeded by default. Blank/default local mode still seeds the existing demo logins. Setting this flag false later does not delete accounts already created.
+5. Run `npm run dev`. Check `/api/health` reports `persistence: "supabase"`, then sign in and save/reload an intake. The health flag reports the configured backend; a successful save confirms database access and schema setup.
+
+### Deploy on Vercel
+
+1. Import this repository, using the repository root as the project root. `vercel.json` selects Vite, runs `npm run build`, and publishes `dist`. Use Node.js 22 or newer (also declared in `package.json`).
+2. Add the Supabase values above in Vercel **Project Settings > Environment Variables** for the deployment environments you use. Set `SEED_DEMO_USERS=true` only if the deployment should initialize the demo accounts. Local `.env` and `data/` files are excluded from deployment with `.vercelignore`.
+3. Add `GEMINI_API_KEY`, `ELEVENLABS_API_KEY`, and their optional model/voice settings if using those services. They remain server-only. Missing keys retain the existing browser voice/rules-only fallbacks.
+4. If using Google sign-in, add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI=https://YOUR_DOMAIN/api/auth/google/callback`. Register that exact callback in Google Cloud. Use a stable domain; preview URLs need their own registered callback/settings. OAuth continues to use the app's Google client, not a Supabase OAuth provider configuration.
+5. Deploy. The Vite frontend and `/api/*` share one origin. `api/index.mjs` exports the Express app; cloud imports do not open a listening port. Local `npm run dev`/`npm start` still start the normal server. Verify login, session restore after refresh, an intake, doctor review, an attachment upload/download, and logout on the deployed URL.
+
+### Persistence and upload details
+
+- `server/environment.mjs` loads local environment values before service configuration without overriding variables already supplied by the host.
+- `server/persistence.mjs` stores one database row per account, intake, review, or account profile/chat settings document, grouped by namespace. Changes are applied through a database transaction with stale-write checks: different records merge, while edits to the same changed record return 409 and ask the user to refresh. Collection reads are paginated. Related changes across multiple namespaces are still separate transactions.
+- Server login tokens are stored by SHA-256 digest with an eight-hour expiry. OAuth state and upload tickets are durable, expiring, one-time records, so different function instances can handle subsequent requests. OAuth state is also bound to the initiating browser with an HttpOnly SameSite cookie. Schedule the optional expired-record cleanup in `supabase/schema.sql` and periodically remove abandoned `staging/` objects; no recurring cleanup job is provisioned automatically.
+- Attachments upload directly from the browser to signed private Storage URLs to avoid Vercel's function payload limit. Finalization checks ticket ownership/expiry, file size, extension, and binary signature before saving a new permanent object and attaching its metadata to history. Downloads are authorized through the app API and redirect to a 60-second signed URL. Failed/abandoned staging uploads are never listed as patient attachments.
+- Audio transcription uses multipart requests capped at 4 MB (with a matching client-side check); larger recordings ask the patient to record a shorter response or type it. Attachment limits remain 10 files per save, 10 MB each. The function has a 60-second configured maximum; external service performance can still cause a timeout.
+- This retains the prototype's existing account roles and JSON-shaped domain records. It does not add account provisioning/password reset or turn the prototype into a production clinical system. Supabase calls use the server service role; authorization remains in the Express routes.
+
+### Verification
+
+- `npm run build` passed and `npm test` passed all six tests.
+- The cloud integration test uses a local Supabase REST/Storage fixture and two Express instances. It covers shared login/logout, saved intake reads, patient/doctor authorization, direct uploads, private downloads, ownership/single-use tickets, file-content validation, stale edit rejection, merging distinct records, pagination, OAuth state consumption, and configuration failures.
+- Live Supabase schema execution, real Storage/CORS, Google consent, Vercel routing, and deployment still need verification after credentials are added. No cloud project was modified or deployed during this change.
+- Reference documentation: [Supabase Data REST API](https://supabase.com/docs/guides/api), [Supabase private Storage access](https://supabase.com/docs/guides/storage/security/access-control), [Vercel Node.js functions](https://vercel.com/docs/functions/runtimes/node-js), and [Vercel payload limits](https://vercel.com/docs/functions/limitations).
+
+## Dark mode update (19 October 2026)
+
+- The doctor workspace now has a complete dark palette in `src/doctor.css`, driven by the existing `html[data-appearance=dark]` preference. Explicit Dark and Use device setting continue to use the existing account-specific settings behavior.
+- Replaced fixed light backgrounds in the top bar, demo queue rows, muted badges, summary editors (including focus and edited states), AI drafts, review notes, evidence quotes/highlights, action buttons, hover states, and loading skeletons with theme variables. Cards, dialogs, the patient workspace, and profile surfaces inherit the same palette.
+- Scoped the shared overrides in `src/preferences.css` so doctor controls and text retain their semantic colors. Warning, urgent, informational, and reviewed badges keep distinct colors; primary actions use contrasting text.
+- Added dark backgrounds and readable text for shared attachment lists/actions and timeline clarification threads, questions, patient replies, and clarification controls. Also covered the patient support/summary panels, composer, saved conversation cards, and selected quick replies.
+- Validation: `npm run build` passed; `node --test tests/*.test.mjs` passed all five existing tests; `git diff --check` passed. These checks validate compilation and existing behavior, not visual contrast.
+- Browser visual verification remains pending: this session had no available browser. Manual check: sign in as a clinician, open Settings and select Dark, inspect Overview and Patient queue (including demo rows and hover states), open a patient and expand the summary/timeline, inspect source evidence and the clarification/approval dialogs, then switch back to Light. Check Use device setting with both OS appearances and confirm the saved preference after refresh. Check patient attachments, clarification replies, and summary panels too.
+
 ## What this project is
 
 This is a focused patient pre-intake prototype for **MediTrace**, inspired by the supplied SIH case-taking brief. The scope is deliberately limited to a **signed-in, voice input and voice output workflow** with a patient-friendly interface.
 
-It does not include medical diagnosis, clinical NLP, document OCR, or a production clinical database. Authentication is a lightweight local prototype (see below), not a production identity system.
+It does not include medical diagnosis, clinical NLP, document OCR, or a production clinical database. Authentication is a lightweight application-managed prototype with local or Supabase persistence (see above), not a production identity system.
 
 ## What has been completed
 
@@ -27,7 +80,7 @@ It does not include medical diagnosis, clinical NLP, document OCR, or a producti
 - A live intake summary that updates as the patient responds.
 - Actual English, Hindi, Marathi, and Tamil translations for prompts and key interface labels.
 - A language selector on the login screen that sets the intake language before signing in and is remembered across visits.
-- A local Express API with persistent JSON session storage under `data/intakes.json` (ignored from git).
+- An Express API with persistent JSON storage for local development or Supabase Postgres/private Storage for cloud deployment (setup above).
 - “Listen again” buttons to replay assistant prompts.
 - Responsive styling for smaller screens.
 - A role-aware entry point: signing in as a patient opens the intake; signing in as a clinician opens the doctor workspace.
@@ -73,7 +126,7 @@ MLCV-CP/
 
 ### Prerequisites
 
-- Node.js 18 or newer (Node 22 was used during development)
+- Node.js 22 or newer
 - npm
 
 ### Commands
@@ -98,7 +151,7 @@ The production files are created in `dist/`.
 ## How sign-in works
 
 - The app opens on the login screen until a valid session is present.
-- Accounts live in `data/users.json`, which is seeded on first run with a demo patient and two demo clinicians. The seeder also adds any missing seed account to an existing `users.json`:
+- In local mode, accounts live in `data/users.json`, which is seeded on the first API request with a demo patient and two demo clinicians. The seeder also adds any missing seed account to an existing `users.json`:
   - Patient — Email: `ramesh.patel@example.com`, Password: `meditrace123`
   - Clinician — Email: `doctor@meditrace.health`, Password: `meditrace123` (Dr. Ananya Rao, Internal Medicine)
   - Clinician — Email: `vikram.nair@meditrace.health`, Password: `meditrace123` (Dr. Vikram Nair, Cardiology)
@@ -195,7 +248,7 @@ Signing in with a clinician account opens a separate, doctor-facing interface. T
 
 ## Suggested next work
 
-1. Move the local JSON store to PostgreSQL or another secured database.
+1. Normalize/index the Supabase domain records and add cross-namespace transactions as the application grows.
 2. Add a final review-and-submit screen, subject to consent and privacy requirements.
 3. Add consent, accessibility, error recovery, and session handling before any real clinical use.
 4. Harden the prototype login for production: server-side persisted sessions, password reset, account provisioning, and audit logging. The Google OAuth flow is a starting point but needs real client credentials, HTTPS, and organisation-level consent review.

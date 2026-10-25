@@ -303,6 +303,7 @@ async function transcribeAudio() {
   transcribing = true;
   voiceStatus.textContent = strings().transcribing;
   const audio = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+  if (audio.size > 4 * 1024 * 1024) { transcribing = false; showToast('This recording is too large. Record a shorter answer or type your response (4 MB maximum).'); voiceStatus.textContent = strings().tapToSpeak; return; }
   if (audio.size < 1000) { transcribing = false; showToast(strings().voiceError); voiceStatus.textContent = strings().tapToSpeak; return; }
   const form = new FormData();
   form.append('audio', audio, 'response.webm');

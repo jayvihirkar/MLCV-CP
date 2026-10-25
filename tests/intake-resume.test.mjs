@@ -13,7 +13,7 @@ test('saved intake survives login and server restart, and rejects other accounts
   let base;
   async function start() {
     server = spawn(process.execPath, [join(fixture, 'server/index.mjs')], {
-      env: { ...process.env, PORT: '0', GEMINI_API_KEY: '' }, stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, PORT: '0', GEMINI_API_KEY: '', SUPABASE_URL: '', SUPABASE_SERVICE_ROLE_KEY: '', VERCEL: '', SEED_DEMO_USERS: 'true' }, stdio: ['ignore', 'pipe', 'pipe'],
     });
     const output = await Promise.race([
       once(server.stdout, 'data').then(([chunk]) => String(chunk)),
