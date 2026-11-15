@@ -1,6 +1,8 @@
 import './style.css';
 import { createConversationSidebar } from './conversations.js';
 import './patient-layout.css';
+import './patient-experience.css';
+import { openIntakeDocuments } from './intake-documents.js';
 
 const ui = {
   en: { newConsultation: 'New consultation', todaysIntake: 'Today’s intake', welcome: 'Welcome', completed: 'Completed', currentConcern: 'Current concern', inProgress: 'In progress', healthHistory: 'Health history', upNext: 'Up next', review: 'Review', privateByDesign: 'Private by design', privacyText: 'Your answers are saved to your local intake session and shown in your summary for review.', saveLater: 'End & save later', voiceIntake: 'Voice-assisted intake', stepOfFour: 'Step 2 of 4', letsBegin: 'Let’s begin', pageTitle: 'Tell me what brings<br/>you in today.', aboutThreeMinutes: 'About 3 minutes', orType: 'or type your response', micPrivacy: 'Your microphone is only used while you are speaking.', yourResponses: 'Your responses', intakeSummary: 'Intake summary', wereListening: 'We’re listening', emptySummary: 'Your answers will appear here as you go, so you can review them before sharing.', tapToSpeak: 'Tap the microphone and speak naturally', recording: 'Recording your response… tap again to stop', transcribing: 'Transcribing your response…', fallbackNarration: 'ElevenLabs is not configured yet. Add your API key to .env; the prompt text is still shown.', voiceError: 'We could not transcribe that audio. Please try again or type your response.', ready: 'Your responses are ready to review', completeReply: 'Thank you. I have recorded your responses. Please review them in the panel before sharing.', greeting: 'Hello Ramesh. I’ll help your care team understand how you’re feeling.', chooseOne: 'Please choose at least one option.', sendSelection: 'Send selection', typePlaceholder: 'Type your response here...' },
@@ -20,15 +22,16 @@ let voiceEnabled = false;
 let intakeStep = 2;
 let conversationSidebar = null;
 let submittedAnswerCount = 0;
-function renderSteps(step = intakeStep) {
+function renderSteps(step = intakeStep, submitted = false) {
   intakeStep = step;
   document.querySelectorAll('.steps .step').forEach((element, index) => {
     const number = index + 1;
-    element.className = `step${number < step ? ' complete' : number === step ? ' current' : ''}`;
-    if (number === step) element.setAttribute('aria-current', 'step');
+    const done = number < step || (submitted && number === step);
+    element.className = `step${done ? ' complete' : number === step ? ' current' : ''}`;
+    if (number === step && !submitted) element.setAttribute('aria-current', 'step');
     else element.removeAttribute('aria-current');
-    element.querySelector('span').innerHTML = number < step ? icon('check') : String(number);
-    element.querySelector('small').textContent = number < step ? strings().completed : number === step ? strings().inProgress : strings().upNext;
+    element.querySelector('span').innerHTML = done ? icon('check') : String(number);
+    element.querySelector('small').textContent = done ? strings().completed : number === step ? strings().inProgress : strings().upNext;
   });
   $('[data-i18n="stepOfFour"]').textContent = strings().stepOfFour.replace('2', String(step));
   if (window.lucide) lucide.createIcons();
@@ -200,6 +203,10 @@ function renderQuestion(question, { append = true } = {}) {
 }
 
 function renderTriage(payload) {
+  let assistantStatus = document.querySelector('#intakeAssistantStatus');
+  if (!assistantStatus) { assistantStatus = document.createElement('p'); assistantStatus.id = 'intakeAssistantStatus'; assistantStatus.className = 'intake-assistant-status'; assistantStatus.setAttribute('role', 'status'); thread.before(assistantStatus); }
+  assistantStatus.textContent = payload.assistant?.message || '';
+  assistantStatus.hidden = !payload.assistant?.message;
   submittedAnswerCount = (payload.answered || []).length;
   $('#undoAnswer').disabled = !(payload.answered || []).length;
   $('#undoFromReview').disabled = !(payload.answered || []).length;
@@ -210,7 +217,7 @@ function renderTriage(payload) {
 
   if (payload.escalated) { showEscalation(payload); return; }
   if (escalationBanner) escalationBanner.hidden = true;
-  if (payload.complete) { finishIntake(payload.answered || []); return; }
+  if (payload.complete) { finishIntake(payload.answered || [], payload); return; }
   voiceDock.classList.remove('complete');
   renderQuestion(payload.question);
 }
@@ -234,7 +241,7 @@ function showEscalation(payload) {
   escalationBanner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-function finishIntake(answers = []) {
+function finishIntake(answers = [], payload = {}) {
   currentQuestion = null;
   textInput.value = '';
   rememberIntake();
@@ -245,12 +252,40 @@ function finishIntake(answers = []) {
   if (quickReplies) { quickReplies.hidden = true; quickReplies.innerHTML = ''; }
   if (escalationBanner) escalationBanner.hidden = true;
   $('#intakeReview').hidden = false;
+  const sent = Boolean(payload.submittedAt);
+  renderSteps(4, sent);
+  document.querySelectorAll('[data-document-count]').forEach(node => { node.textContent = payload.documentCount ? `${payload.documentCount} document${payload.documentCount === 1 ? '' : 's'} saved` : 'Optional'; });
+  $('#reviewEyebrow').textContent = sent ? 'SAVED & SENT' : 'FINAL STEP';
+  $('#reviewTitle').textContent = sent ? 'Sent for clinician review' : 'Your answers are ready';
+  $('#reviewNextStep').textContent = sent ? 'You can close this page now. Return to this conversation to see any clarification questions from your care team.' : 'Add any prescriptions or reports, check your answers, then send this intake for clinician review.';
+  $('#reviewSendHeading').textContent = sent ? 'Your care team can review this intake' : 'Send to your care team';
+  $('#reviewSendHelp').textContent = sent ? 'Your answers and uploaded documents are saved together. If a clinician needs more information, their question will appear here.' : 'Your answers are saved. Send when you have finished checking them.';
+  $('#submitIntake').hidden = sent;
+  $('#intakeSubmissionStatus').textContent = sent ? `Reference: ${session?.id?.slice(0, 8) || ''}` : '';
   $('#reviewAnswers').innerHTML = answers.map((answer, index) => `<article class="summary-item"><span>${index + 1}</span><div><small>${escapeHtml(answer.label)}</small><p>${escapeHtml(answer.answer)}</p></div></article>`).join('');
   thread.hidden = true;
   voiceDock.hidden = true;
   $('.intro-row').hidden = true;
   $('#intakeReview').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('.conversation').scrollTop = 0;
+  if (window.lucide) lucide.createIcons();
 }
+
+$('#openIntakeDocuments').addEventListener('click', () => openIntakeDocuments(session?.id));
+$('#reviewUploadDocuments').addEventListener('click', () => openIntakeDocuments(session?.id));
+$('#submitIntake').addEventListener('click', async () => {
+  if (!session || submitting) return;
+  const button = $('#submitIntake');
+  button.disabled = true; submitting = true;
+  $('#intakeSubmissionStatus').textContent = 'Sending your intake…';
+  try {
+    const payload = await (await api(`/api/sessions/${session.id}/submit`, { method: 'POST' })).json();
+    session.submittedAt = payload.submittedAt;
+    renderTriage(payload);
+    await conversationSidebar?.refresh();
+  } catch (error) { $('#intakeSubmissionStatus').textContent = error.message; }
+  finally { button.disabled = false; submitting = false; }
+});
 
 async function sendAnswer(raw) {
   const answer = String(raw == null ? '' : raw).trim();
@@ -545,10 +580,10 @@ export function startIntake(user) {
     currentSession: () => session,
     isBusy: () => submitting || transcribing || isRecording,
     onNew: beginNewIntake,
-    onGuide: firstChat => {
-      $('.steps').hidden = !firstChat;
-      $('[data-i18n="stepOfFour"]').hidden = !firstChat;
-      $('.crumb .slash').hidden = !firstChat;
+    onGuide: () => {
+      $('.steps').hidden = false;
+      $('[data-i18n="stepOfFour"]').hidden = false;
+      $('.crumb .slash').hidden = false;
     },
     onOpen: async id => {
       rememberIntake();

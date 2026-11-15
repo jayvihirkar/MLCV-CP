@@ -87,6 +87,7 @@
 
           <button class="login-submit" id="loginSubmit" type="submit"><span data-login-i18n="submit">Sign in</span><i data-lucide="arrow-right"></i></button>
           <p class="login-error" id="loginError" role="alert" hidden></p>
+          <p class="signup-switch">New patient? <button type="button" class="forgot-link" id="openSignup">Create an account</button></p>
 
           <div class="demo-card">
             <div class="demo-head">
@@ -127,6 +128,25 @@
             <button type="button" class="demo-fill" id="fillDemoDoctor"><i data-lucide="stethoscope"></i><span>Fill clinician credentials</span></button>
           </div>
         </form>
+        <form class="login-card" id="signupForm" hidden>
+          <p class="eyebrow">Patient registration</p>
+          <h2 id="signupTitle">Create your account</h2>
+          <p class="login-sub">Start with your basic details. You can add medical history and documents later.</p>
+          <div class="field-block"><label class="login-label" for="signupName">Full name</label><div class="login-field"><input id="signupName" name="name" autocomplete="name" minlength="2" maxlength="120" required /></div></div>
+          <div id="signupCredentials">
+            <div class="field-block"><label class="login-label" for="signupEmail">Email address</label><div class="login-field"><input id="signupEmail" name="email" type="email" autocomplete="email" maxlength="254" required /></div></div>
+            <div class="field-block"><label class="login-label" for="signupPassword">Password (at least 10 characters)</label><div class="login-field"><input id="signupPassword" name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required /></div></div>
+            <div class="field-block"><label class="login-label" for="signupConfirm">Confirm password</label><div class="login-field"><input id="signupConfirm" type="password" autocomplete="new-password" minlength="10" maxlength="128" required /></div></div>
+          </div>
+          <div class="signup-basics">
+            <div class="field-block"><label class="login-label" for="signupBirthDate">Date of birth (YYYY-MM-DD)</label><div class="login-field"><input id="signupBirthDate" name="birthDate" type="text" inputmode="numeric" autocomplete="bday" placeholder="1998-04-12" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}" maxlength="10" required /></div></div>
+            <div class="field-block"><label class="login-label" for="signupSex">Sex</label><div class="login-field"><select id="signupSex" name="sex" required><option value="">Choose</option><option>Female</option><option>Male</option><option>Intersex</option><option>Prefer not to say</option></select></div></div>
+          </div>
+          <div class="field-block"><label class="login-label" for="signupPhone">Phone number (optional)</label><div class="login-field"><input id="signupPhone" name="phone" type="tel" autocomplete="tel" maxlength="80" /></div></div>
+          <p class="login-error" id="signupError" role="alert" hidden></p>
+          <button class="login-submit" id="signupSubmit" type="submit">Create account &amp; continue</button>
+          <p class="signup-switch"><button type="button" class="forgot-link" id="backToLogin">Back to sign in</button></p>
+        </form>
       </div>
     </section>
 
@@ -137,10 +157,10 @@
         <a class="brand small-brand" href="#" aria-label="MediTrace home"><span class="brand-mark"><i data-lucide="activity"></i></span><span>Medi<span>Trace</span></span></a>
         <nav class="steps" aria-label="Intake progress">
           <p class="eyebrow" data-i18n="todaysIntake">Today’s intake</p>
-          <a class="step complete" href="#"><span><i data-lucide="check"></i></span><div><b data-i18n="welcome">Welcome</b><small data-i18n="completed">Completed</small></div></a>
-          <a class="step current" href="#"><span>2</span><div><b data-i18n="currentConcern">Current concern</b><small data-i18n="inProgress">In progress</small></div></a>
-          <a class="step" href="#"><span>3</span><div><b data-i18n="healthHistory">Health history</b><small data-i18n="upNext">Up next</small></div></a>
-          <a class="step" href="#"><span>4</span><div><b data-i18n="review">Review</b><small data-i18n="upNext">Up next</small></div></a>
+          <div class="step complete"><span><i data-lucide="check"></i></span><div><b data-i18n="welcome">Welcome</b><small data-i18n="completed">Completed</small></div></div>
+          <div class="step current"><span>2</span><div><b data-i18n="currentConcern">Current concern</b><small data-i18n="inProgress">In progress</small></div></div>
+          <div class="step"><span>3</span><div><b data-i18n="healthHistory">Health history</b><small data-i18n="upNext">Up next</small></div></div>
+          <div class="step"><span>4</span><div><b data-i18n="review">Review</b><small data-i18n="upNext">Up next</small></div></div>
         </nav>
         <section id="chatHistory" class="sidebar-history" hidden aria-label="Your conversations">
           <div class="sidebar-history-heading"><h2>Conversations</h2><button type="button" id="createChatGroup">＋ New group</button></div>
@@ -159,6 +179,8 @@
           <button type="button" id="openChatSidebar" class="chat-sidebar-toggle" aria-label="Open conversations" aria-expanded="false"><i data-lucide="panel-left"></i></button>
           <div class="crumb"><span class="live-dot"></span> <span data-i18n="voiceIntake">Voice-assisted intake</span> <span class="slash">/</span> <span data-i18n="stepOfFour">Step 2 of 4</span></div>
           <div class="header-actions">
+            <button type="button" id="openIntakeDocuments" class="patient-action header-upload" aria-label="Upload prescriptions and reports"><i data-lucide="paperclip"></i><span>Upload documents</span></button>
+            <button type="button" class="patient-action header-upload" data-open-settings aria-label="Settings"><i data-lucide="settings"></i><span>Settings</span></button>
         <div class="patient-card">
           <div class="avatar">RP</div>
           <div><strong>Ramesh Patel</strong><span data-i18n="newConsultation">New consultation</span></div>
@@ -188,9 +210,14 @@
           </div>
 
           <section id="intakeReview" class="intake-review" hidden aria-label="Review your answers">
-            <h2>Your intake is complete</h2>
-            <p>Your answers are saved and available for clinician review.</p>
-            <div id="reviewAnswers" class="summary-items"></div>
+            <p class="eyebrow" id="reviewEyebrow">FINAL STEP</p>
+            <h2 id="reviewTitle">Your answers are ready</h2>
+            <p id="reviewNextStep">Add any prescriptions or reports, check your answers, then send this intake for clinician review.</p>
+            <div class="review-next-steps">
+              <section class="review-document-card"><span class="review-step-number">1</span><div><h3>Add prescriptions or reports</h3><p>Photos, scanned documents, PDFs, or Word files. No history form needed.</p><button type="button" id="reviewUploadDocuments" class="patient-action"><i data-lucide="upload"></i>Upload documents</button><small data-document-count>Optional</small></div></section>
+              <section class="review-send-card"><span class="review-step-number">2</span><div><h3 id="reviewSendHeading">Send to your care team</h3><p id="reviewSendHelp">Your answers are saved. Send when you have finished checking them.</p><button type="button" id="submitIntake" class="patient-action primary">Send for clinician review<i data-lucide="arrow-right"></i></button><p id="intakeSubmissionStatus" role="status" aria-live="polite"></p></div></section>
+            </div>
+            <details class="review-answer-details" open><summary>Check your answers</summary><div id="reviewAnswers" class="summary-items"></div></details>
             <div class="review-actions">
               <button type="button" id="viewConversation" class="quick-chip">View conversation</button>
               <button type="button" id="startNewIntake" class="quick-chip" hidden>Start new intake</button>
@@ -216,6 +243,18 @@
 
     </main>
 
+    <dialog id="intakeDocuments" class="intake-documents" aria-labelledby="intakeDocumentsTitle">
+      <div class="intake-documents-heading"><div><p class="eyebrow">DOCUMENTS FOR THIS INTAKE</p><h2 id="intakeDocumentsTitle">Upload prescriptions &amp; reports</h2></div><button type="button" id="closeIntakeDocuments" class="patient-action">Done</button></div>
+      <p>Add documents at any time, including after answering the questions. Originals and extracted findings stay with this intake for clinician review.</p>
+      <form id="intakeDocumentForm">
+        <label id="intakeDocumentDrop" class="document-drop"><span>Choose files or drop them here</span><small>Photos, PDF, or DOCX · up to 10 files at a time · 10 MB each</small><input id="intakeDocumentFiles" type="file" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.pdf,.docx" /></label>
+        <ul id="intakeDocumentSelection"></ul>
+        <button type="submit" id="saveIntakeDocuments" class="patient-action primary" disabled>Upload selected files</button>
+      </form>
+      <p id="intakeDocumentStatus" role="status" aria-live="polite"></p>
+      <div id="intakeDocumentList"></div>
+    </dialog>
+
     <dialog id="chatManager" class="chat-manager" aria-labelledby="chatManagerTitle"><h2 id="chatManagerTitle">Manage conversations</h2><form id="chatManagerForm"><div id="chatManagerFields"></div><p id="chatManagerError" role="status"></p><div class="chat-manager-actions"><button type="button" id="cancelChatManager" class="quick-chip">Cancel</button><button type="submit" id="saveChatManager" class="quick-chip">Save</button></div></form></dialog>
     <dialog id="patientProfile" class="patient-profile" aria-labelledby="profileHeading">
       <div class="profile-heading"><div><p class="eyebrow">Your account</p><h2 id="profileHeading">Profile &amp; medical history</h2><p id="profileAccount"></p></div><button type="button" id="closeProfile" class="quick-chip">Close</button></div>
@@ -225,7 +264,7 @@
         <form id="profileForm" class="profile-form">
           <h3>Patient details</h3>
           <div class="profile-grid">
-            <label>Date of birth<input type="date" name="birthDate" /></label>
+            <label>Date of birth (YYYY-MM-DD)<input type="text" name="birthDate" inputmode="numeric" autocomplete="bday" placeholder="1998-04-12" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}" maxlength="10" /></label>
             <label>Sex<select name="sex"><option value="">Not provided</option><option>Female</option><option>Male</option><option>Intersex</option><option>Prefer not to say</option></select></label>
             <label>Phone<input type="tel" name="phone" maxlength="80" autocomplete="tel" /></label>
             <label>Blood group<select name="bloodGroup"><option value="">Unknown / not provided</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></label>

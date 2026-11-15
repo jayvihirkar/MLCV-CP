@@ -4,9 +4,9 @@
 // A HYBRID design:
 //   * Predefined clinical question flows (deterministic rules) own safety and
 //     structure. Red-flag screening always runs first.
-//   * An LLM (see llm.mjs) may select the most relevant next follow-up and
-//     normalise free-text answers, but it can only choose from the allowed
-//     question bank. It never invents advice and never diagnoses.
+//   * Gemini writes contextual follow-ups from the complete conversation.
+//     Generated questions are persisted; rules retain safety screening.
+//     The standard question bank is an explicitly disclosed fallback.
 //
 // This module is intentionally non-diagnostic: it gathers a history and
 // surfaces reported warning signs so a clinician can act. It does not decide
@@ -40,13 +40,14 @@ const CHIEF_COMPLAINT_QUESTION = {
 
 const KEYWORDS = {
   'chest-pain': { strong: ['chest pain', 'chest', 'angina', 'heart', 'chest pressure'], weak: ['palpitations', 'left arm', 'jaw', 'sweating'] },
-  breathing: { strong: ['shortness of breath', 'breathless', 'breathing', 'breath', 'asthma', 'wheeze'], weak: ['cough', 'coughing', 'oxygen', 'wheezing'] },
+  breathing: { strong: ['shortness of breath', 'breathless', 'breathing', 'breath', 'wheeze'], weak: ['oxygen', 'wheezing', 'asthma'] },
+  cough: { strong: ['cough', 'coughing'], weak: [] },
   headache: { strong: ['headache', 'head ache', 'migraine', 'head pain'], weak: ['dizzy', 'dizziness', 'vision', 'light sensitivity', 'nausea'] },
   fever: { strong: ['fever', 'temperature', 'feverish', 'pyrexia'], weak: ['chills', 'shivering', 'sweating', 'hot', 'cold'] },
   'abdominal-pain': { strong: ['stomach', 'abdominal', 'abdomen', 'belly', 'tummy', 'stomach pain'], weak: ['nausea', 'vomit', 'vomiting', 'diarrhea', 'diarrhoea', 'constipation'] },
 };
 
-const ACUITY_ORDER = ['chest-pain', 'breathing', 'headache', 'fever', 'abdominal-pain', 'default'];
+const ACUITY_ORDER = ['chest-pain', 'breathing', 'headache', 'fever', 'abdominal-pain', 'cough', 'default'];
 
 export function classifyComplaint(rawText) {
   const text = String(rawText || '').toLowerCase();
@@ -82,6 +83,14 @@ const bool = (id, field, text, summaryLabel, redFlag, redFlagWhen = 'yes') => ({
   options: [{ value: true, label: 'Yes' }, { value: false, label: 'No' }] });
 
 const FLOWS = {
+  cough: [
+    bool('cough-safety', 'coughSafety', 'With this cough, are you having severe trouble breathing, chest pain, or coughing up blood right now?', 'Warning signs with cough', { id: 'cough-warning', label: 'Severe breathing difficulty, chest pain, or coughing blood reported with cough' }),
+    { id: 'cough-duration', field: 'duration', summaryLabel: 'Duration', kind: 'text', phase: 'core', text: 'When did your cough start?' },
+    { id: 'cough-pattern', field: 'coughPattern', summaryLabel: 'Cough pattern', kind: 'text', phase: 'core', text: 'Is the cough dry or are you bringing up phlegm, and what makes it worse?' },
+    { id: 'cough-associated', field: 'associatedSymptoms', summaryLabel: 'Other symptoms', kind: 'text', phase: 'core', text: 'Have you noticed fever, a sore throat, wheezing, or any other symptoms with the cough?' },
+    { id: 'cough-history', field: 'history', summaryLabel: 'Relevant history', kind: 'text', phase: 'history', text: 'Do you have any medical conditions or regular medicines your care team should know about?' },
+    { id: 'cough-allergies', field: 'allergies', summaryLabel: 'Allergies', kind: 'text', phase: 'history', text: 'Do you have any allergies to medicines?' },
+  ],
   'chest-pain': [
     bool('cp-severe-now', 'severeNow', 'Right now, is the chest pain severe, crushing or getting worse?', 'Severe chest pain now', { id: 'severe-chest-pain', label: 'Severe / worsening chest pain' }),
     bool('cp-breathless', 'breathless', 'Are you struggling to breathe, or very short of breath right now?', 'Breathlessness', { id: 'breathlessness', label: 'Breathlessness with chest pain' }),
@@ -99,9 +108,9 @@ const FLOWS = {
   ],
 
   breathing: [
-    bool('br-worsening', 'worsening', 'Is your breathing getting worse quickly, or are you unable to speak a full sentence?', 'Rapidly worsening breathing', { id: 'severe-breathlessness', label: 'Severe or rapidly worsening breathlessness' }),
+    bool('br-worsening', 'worsening', 'Are you currently struggling to breathe, or unable to speak a full sentence because of breathing trouble?', 'Rapidly worsening breathing', { id: 'severe-breathlessness', label: 'Severe or rapidly worsening breathlessness' }),
     bool('br-chest-confusion', 'chestConfusion', 'Do you have chest pain, blue lips, or new confusion?', 'Chest pain / blue lips / confusion', { id: 'breathing-red-flag', label: 'Breathlessness with chest pain, blue lips or confusion' }),
-    { id: 'br-duration', field: 'duration', summaryLabel: 'Duration', kind: 'text', phase: 'core', text: 'When did the breathing difficulty start, and is it constant or in episodes?' },
+    { id: 'br-duration', field: 'duration', summaryLabel: 'Duration', kind: 'text', phase: 'core', text: 'When did these symptoms start, and are they constant or in episodes?' },
     { id: 'br-severity', field: 'severity', summaryLabel: 'Activity level', kind: 'single', phase: 'core', text: 'How much activity triggers it?', options: [{ value: 'rest', label: 'Even at rest' }, { value: 'mild', label: 'Walking around the house' }, { value: 'moderate', label: 'Climbing stairs' }, { value: 'strenuous', label: 'Only with strenuous activity' }] },
     { id: 'br-associated', field: 'associatedSymptoms', summaryLabel: 'Associated symptoms', kind: 'multi', phase: 'core', text: 'Are you also experiencing any of these?', options: [{ value: 'cough', label: 'Cough' }, { value: 'wheeze', label: 'Wheezing' }, { value: 'fever', label: 'Fever' }, { value: 'sputum', label: 'Phlegm or sputum' }, { value: 'blood', label: 'Blood in sputum' }, { value: 'none', label: 'None of these' }] },
     { id: 'br-trigger', field: 'trigger', summaryLabel: 'Triggers', kind: 'text', phase: 'core', text: 'Does anything seem to trigger or worsen it — for example exercise, night-time, or allergens?' },
@@ -155,6 +164,7 @@ const FLOWS = {
   ],
 
   default: [
+    { id: 'df-context', field: 'clarifiedConcern', summaryLabel: 'More about your concern', kind: 'text', phase: 'core', text: 'Can you tell me a little more about what is bothering you? If you have pain or discomfort, where do you feel it?', requires: state => /^(pain|discomfort|unwell|sick|not feeling well|feeling unwell)[.!\s]*$/i.test(state.chiefComplaint || '') },
     { id: 'df-duration', field: 'duration', summaryLabel: 'Duration', kind: 'text', phase: 'core', text: 'When did this problem start?' },
     bool('df-redflag', 'generalRed', 'Right now, do you have any severe symptoms such as difficulty breathing, chest pain, fainting, or heavy bleeding?', 'Severe symptoms now', { id: 'general-red-flag', label: 'Severe symptoms reported (breathing, chest pain, fainting, bleeding)' }),
     { id: 'df-severity', field: 'severity', summaryLabel: 'Severity', kind: 'number', phase: 'core', text: 'On a scale of one to ten, how severe does it feel right now?' },
@@ -169,6 +179,7 @@ const FLOWS = {
 export const COMPLAINT_LABELS = {
   'chest-pain': 'Chest pain',
   breathing: 'Breathing difficulty',
+  cough: 'Cough',
   headache: 'Headache',
   fever: 'Fever',
   'abdominal-pain': 'Abdominal pain',
@@ -177,7 +188,9 @@ export const COMPLAINT_LABELS = {
 
 function flowFor(complaint) { return FLOWS[complaint] || FLOWS.default; }
 
-export function questionById(id) {
+export function questionById(id, state) {
+  const generated = state?.generatedQuestions?.find(question => question.id === id);
+  if (generated) return generated;
   if (id === CHIEF_COMPLAINT_QUESTION.id) return CHIEF_COMPLAINT_QUESTION;
   const legacy = LEGACY_QUESTIONS.find((question) => question.id === id);
   if (legacy) return { ...legacy, summaryLabel: legacy.summaryLabel.en };
@@ -214,6 +227,8 @@ export function createTriageState({ adaptive = true } = {}) {
 }
 
 export function candidateQuestions(state) {
+  if (state.aiComplete) return [];
+  if (state.aiQuestion && !state.askedQuestions.includes(state.aiQuestion.id)) return [state.aiQuestion];
   if (!state.adaptive) {
     const answeredIds = new Set(state.askedQuestions);
     return LEGACY_QUESTIONS.filter((question) => !answeredIds.has(question.id))
@@ -222,7 +237,7 @@ export function candidateQuestions(state) {
   if (!state.chiefComplaint) return [CHIEF_COMPLAINT_QUESTION];
   const answeredIds = new Set(state.askedQuestions);
   return flowFor(state.complaint)
-    .filter((question) => !answeredIds.has(question.id) && (!question.requires || question.requires(state)))
+    .filter((question) => !answeredIds.has(question.id) && !(question.field === 'duration' && state.duration) && (!question.requires || question.requires(state)))
     .map((question) => ({ id: question.id, text: question.text, summaryLabel: question.summaryLabel, phase: question.phase, kind: question.kind, options: question.options || null }));
 }
 
@@ -237,7 +252,31 @@ export function resolveQuestion(state, locale = 'en') {
     question.text = legacy.text[locale] || legacy.text.en;
     question.summaryLabel = legacy.summaryLabel[locale] || legacy.summaryLabel.en;
   }
+  if (state.reprompt?.questionId === question.id) question.text = state.reprompt.text;
   return { complete: false, escalated: false, question };
+}
+
+// These are conversation openers, not evidence about a patient's health. Keep
+// validation conservative: an unfamiliar symptom/medicine is never rejected
+// simply because it is absent from our complaint routing keywords.
+export function answerNeedsClarification(question, raw) {
+  const text = String(raw || '').toLowerCase().replace(/[\p{P}\p{S}]/gu, ' ').replace(/\s+/g, ' ').trim();
+  const greeting = /^(?:(?:hello|hi|hey|hii+|helo|good morning|good evening|good afternoon|namaste|नमस्ते|नमस्कार|வணக்கம்|thanks|thank you|okay|ok|help|please help|can you help me|yes hello|hello there|hi there|i am here)(?:\s+(?:there|doctor|thanks|please|meditrace))?\s*)+$/u.test(text);
+  if (greeting || !/[\p{L}\p{N}]/u.test(text) || /^(asdf\w*|qwerty\w*|([a-z])\2{5,})$/i.test(text)) return true;
+  if (['chief-complaint', 'main-concern'].includes(question.id) && (/^\d+$/.test(text) || /^(yes|no|none|not sure|i don t know|i dont know|i do not know|i need help|help me|i am|nothing|what should i say|what should i do)$/.test(text))) return true;
+  if (question.kind === 'number') {
+    const number = String(raw).match(/-?\d+/);
+    if (number && (Number(number[0]) < 0 || Number(number[0]) > 10)) return true;
+  }
+  return false;
+}
+
+export function clarificationPrompt(question, locale = 'en') {
+  const language = locale.split('-')[0];
+  const chief = ['chief-complaint', 'main-concern'].includes(question.id);
+  if (chief) return ({ en: 'Hello! What health concern or reason for a visit would you like help with? For example, tell me what is bothering you or what has changed.', hi: 'नमस्ते! कृपया बताएं कि आपको क्या स्वास्थ्य समस्या है या आज परामर्श का क्या कारण है।', mr: 'नमस्कार! तुम्हाला कोणती आरोग्य समस्या आहे किंवा आज भेटीचे कारण काय आहे ते सांगा.', ta: 'வணக்கம்! உங்களுக்கு என்ன உடல்நலப் பிரச்சினை உள்ளது அல்லது இன்று ஆலோசனைக்கான காரணம் என்ன?' })[language] || 'Please describe your health concern or reason for a visit before we continue.';
+  const original = typeof question.text === 'string' ? question.text : question.text?.[language] || question.text?.en;
+  return language === 'en' ? `I still need an answer to this question. ${question.kind === 'number' ? 'Please give a number from 0 to 10, or say if you are unsure. ' : ''}${original}` : original;
 }
 
 export function escalationMessage(state) {
@@ -340,13 +379,14 @@ function recordRedFlag(state, redFlag, evidence) {
  * red-flag safety.
  */
 export function applyAnswer(state, questionId, answerText, extracted = null, labelOverride = null) {
-  const question = questionById(questionId);
+  const question = questionById(questionId, state);
   if (!question) return state;
   const rules = interpretAnswer(question, answerText);
   const merged = { ...(extracted || {}), ...rules };
   const label = labelOverride || (typeof question.summaryLabel === 'string' ? question.summaryLabel : (question.summaryLabel.en || ''));
 
   state.askedQuestions.push(questionId);
+  delete state.reprompt;
   state.nextQuestionId = null;
   state.answered[questionId] = { text: String(answerText).slice(0, 2000), value: merged.value ?? null, at: new Date().toISOString() };
   state.answers.push({ questionId, label, answer: String(answerText).slice(0, 2000), at: new Date().toISOString() });
@@ -354,12 +394,19 @@ export function applyAnswer(state, questionId, answerText, extracted = null, lab
 
   if (questionId === CHIEF_COMPLAINT_QUESTION.id) {
     state.chiefComplaint = String(answerText).slice(0, 500);
+    const statedDuration = state.chiefComplaint.match(/\b(\d+\s*(?:hours?|days?|weeks?|months?|years?))\b/i);
+    if (statedDuration) state.duration = statedDuration[1];
     state.complaint = classifyComplaint(answerText);
     state.complaintLabel = COMPLAINT_LABELS[state.complaint] || COMPLAINT_LABELS.default;
     return state;
   }
 
   switch (question.field) {
+    case 'clarifiedConcern':
+      state.chiefComplaint = `${state.chiefComplaint} — ${String(answerText).slice(0, 500)}`;
+      state.complaint = classifyComplaint(state.chiefComplaint);
+      state.complaintLabel = COMPLAINT_LABELS[state.complaint] || COMPLAINT_LABELS.default;
+      break;
     case 'duration': state.duration = merged.value ?? state.duration; break;
     case 'severity': state.severity = typeof merged.value === 'number' ? merged.value : state.severity; break;
     case 'associatedSymptoms':

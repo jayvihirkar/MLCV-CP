@@ -48,7 +48,7 @@ test('conversation sidebar supports organization and protects deletion behind co
   assert.equal(created, 1);
   data.firstChat = true;
   await vm.runInContext('sidebar.refresh()', context);
-  assert.equal(query('#chatHistory').hidden, true);
+  assert.equal(query('#chatHistory').hidden, false);
   assert.equal(guides.at(-1), true);
   const wide = vm.runInContext('chatMenuPosition({left:240,top:780},{right:280},{height:200},{width:1280,height:800})', context);
   assert.ok(wide.left > 280, 'The menu should sit outside the sidebar when there is room');

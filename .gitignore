@@ -10,3 +10,9 @@ data/attachments/
 data/chat-settings.json
 data/chat-settings.json.tmp
 data/*.tmp
+data/document-extractions.json
+data/disabled-demo-users.json
+worker-data/
+.venv-document/
+__pycache__/
+*.pyc

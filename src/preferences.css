@@ -1,17 +1,12 @@
 :root{--reading-font:"DM Sans",sans-serif;--reading-scale:1}
-.doctor-preferences{display:none}.is-doctor .doctor-preferences{display:block;position:fixed;bottom:16px;right:22px;z-index:25;padding:9px 14px;border:1px solid var(--line);border-radius:9px;background:#0c746b;color:white;cursor:pointer}
 .preferences-dialog{width:min(430px,calc(100vw - 32px));max-height:90dvh;overflow:auto;padding:26px;border:1px solid var(--line);border-radius:18px;background:#fff;color:var(--ink)}
 .preferences-dialog::backdrop{background:#102e3866}.preferences-dialog h2{margin:0 0 10px;font-size:23px}.preferences-dialog p{font-size:13px;line-height:1.5}.preferences-dialog label{display:grid;gap:6px;margin:16px 0;font-size:13px}.preferences-dialog select{width:100%;padding:10px;border:1px solid #bdd4c8;border-radius:8px;background:#fff;color:inherit;font:inherit}.preferences-preview{font-family:var(--reading-font);font-size:16px;padding:14px;border-radius:10px;background:#edf5f0}.preferences-note{color:var(--muted)}.preferences-save{padding:10px 16px;border:0;border-radius:9px;background:#0c746b;color:white;cursor:pointer}.preferences-status{color:#b44141}
-html[data-text-sizing=ready] body.authenticated :where(*){font-size:calc(var(--base-text-size,14px) * var(--reading-scale))!important}
-body.authenticated :is(button,input,select,textarea){font-family:var(--reading-font)}
-html:not([data-reading-font=default]) body.authenticated :where(*){font-family:var(--reading-font)!important}
 html[data-appearance=dark]{color-scheme:dark;--ink:#e5ede9;--muted:#a8bcb2;--line:#35483e;--teal:#83d8c2;--teal-deep:#83d8c2;--aqua:#274c40;--cream:#17251f;--panel:#20332a}
 html[data-appearance=dark] body.authenticated{background:#14211b;color:#e5ede9}
 html[data-appearance=dark] body.authenticated :is(.app-shell,.workspace,.voice-dock){background:#17251f;color:#e5ede9}
 html[data-appearance=dark] body.authenticated :is(.side-panel,header){background:#14211b;color:#e5ede9;border-color:#35483e}
 html[data-appearance=dark] body.authenticated :is(dialog,.patient-menu,.sidebar-row-menu,.language-menu,.patient-card,.intake-review,.preferences-dialog){background:#20332a!important;color:#e5ede9!important;border-color:#405b4d!important}
 html[data-appearance=dark] body.authenticated :is(input:where(:not(.doctor-root *)),select:where(:not(.doctor-root *)),textarea:where(:not(.doctor-root *)),.text-entry,.quick-chip,.time-pill,.preferences-preview,.privacy-note,.attachment-card,.clarification-panel){background:#263c31!important;color:#e5ede9!important;border-color:#4c6859!important}
-html[data-appearance=dark] body.authenticated:not(.is-doctor) :is(h1,h2,h3,h4,p,span,small,label,strong,b,time,a,button){color:inherit}
 html[data-appearance=dark] body.authenticated :is(.message-meta,.sidebar-chat-open small,.eyebrow,.crumb,.preferences-note,.profile-event-meta,.listening-label,.sidebar-status){color:#adbbaf}
 html[data-appearance=dark] body.authenticated :is(.sidebar-chat-row:hover,.sidebar-chat-row.active,.patient-menu button:hover,.sidebar-row-menu button:hover,.quick-chip:hover){background:#2d493b;color:#eff8f1}
 html[data-appearance=dark] body.authenticated :is(.user-message,.patient-message) .message-body{background:#235443;color:#f0fff7}
@@ -34,3 +29,28 @@ html[data-appearance=dark] body.authenticated :is(.summary-item>span,.empty-icon
 html[data-appearance=dark] body.authenticated .quick-chip:is(.multi.selected,.quick-chip-send){background:#83d8c2!important;color:#102a20!important;border-color:#83d8c2!important}
 html[data-appearance=dark] .doctor-root .dc-clarify-target{background:var(--dc-field);border-color:var(--dc-line);color:var(--dc-ink)}
 html[data-appearance=dark] .doctor-root .clarification-thread textarea{background:var(--dc-field);border-color:var(--dc-line);color:var(--dc-ink)}
+.preferences-dialog{width:min(760px,calc(100vw - 40px));padding:32px}
+.preferences-dialog::backdrop{background:#071510a6;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.preferences-dialog [hidden]{display:none!important}
+.preference-languages{display:flex;gap:12px;border:0;padding:0;margin:24px 0;flex-wrap:wrap}
+.preference-languages legend{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.preference-languages label{position:relative;display:block;flex:1;min-width:120px;margin:0!important;cursor:pointer}
+.preference-languages input{position:absolute;opacity:0;width:1px;height:1px}
+.preference-languages span{display:flex;align-items:center;justify-content:center;min-height:86px;border:2px solid var(--line);border-radius:14px;background:var(--panel,#edf5f0);color:inherit;font-size:22px;font-weight:600}
+.preference-languages input:checked+span{border-color:#83d8c2;background:#285346;color:#effff7}
+.preference-languages input:focus-visible+span{outline:3px solid #83d8c2;outline-offset:4px}
+.preferences-dialog .appearance-setting{max-width:320px;font-size:15px}
+.preferences-dialog .preferences-save{font-size:16px;padding:13px 24px}
+.delete-profile-setting{border-top:1px solid var(--line);margin-top:28px;padding-top:12px}
+.delete-profile-setting button{padding:10px 14px;border:1px solid #b45454;color:#a72c2c;background:transparent;border-radius:8px;cursor:pointer;margin:4px}
+.delete-profile-setting input{padding:10px;border:1px solid var(--line);border-radius:8px;font:inherit}
+html[data-appearance=dark] .delete-profile-setting button{color:#ffb4ab}
+.language-welcome .preferences-save{display:block;margin-left:auto}
+@media(max-width:560px){.preferences-dialog{padding:24px}.preference-languages{gap:10px}.preference-languages label{flex:1 0 40%;min-width:0}.preference-languages span{font-size:20px;min-height:76px}}
+html[data-appearance=dark] .login-form-panel{background:#17251f;color:#e5ede9}
+html[data-appearance=dark] .login-card :is(h2,.login-label,.remember-me){color:#e5ede9}
+html[data-appearance=dark] .login-card :is(.login-sub,.login-divider,.demo-cred-label,.demo-head small){color:#afc4b8}
+html[data-appearance=dark] :is(.login-field,.oauth-button,.demo-card,.demo-cred-value){background:#20372b;color:#e5ede9;border-color:#496455}
+html[data-appearance=dark] .login-field input{color:#e5ede9}
+html[data-appearance=dark] .login-field input::placeholder{color:#afc4b8}
+html[data-appearance=dark] .login-card :is(.forgot-link,.demo-fill,.demo-cred-value code,.demo-head b){color:#83d8c2}

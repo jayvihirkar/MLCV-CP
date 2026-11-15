@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently \"vite\" \"node server/index.mjs\"",
+    "dev": "concurrently --kill-others --names web,api,ocr \"vite\" \"node server/index.mjs\" \"node scripts/dev-document-worker.mjs\"",
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server/index.mjs",

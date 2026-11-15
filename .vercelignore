@@ -3,4 +3,7 @@
 data/
 tmp/
 tests/
+services/
+.venv-document/
+worker-data/
 .git/

@@ -1,0 +1,11 @@
+SYNTHETIC OCR TEST - NOT FOR CLINICAL USE
+Patient: Test Patient A
+Date: 26 October 2026
+Concern: Left knee pain for two months.
+Pain score: 7 out of 10.
+Associated symptoms: Mild swelling.
+History: Type 2 diabetes mellitus.
+Medication history: Metformin 500 mg twice daily.
+Allergies: No known drug allergies.
+Test mentioned: Knee X-ray.
+This is fictional test data, not a prescription.

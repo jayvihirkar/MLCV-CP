@@ -1,0 +1,31 @@
+Built-in image generation tool, 26 October 2026
+
+01-printed-medical-note.png
+Use case: scientific-educational. Create a portrait raster image of one clean printed fictional medical intake note for OCR software testing. Flat straight-on scan, white paper, crisp black sans-serif text, large font, single column, generous spacing, no graphics or logos. Render exactly these lines, no additional text:
+SYNTHETIC OCR TEST - NOT FOR CLINICAL USE
+Patient: Test Patient A
+Date: 26 October 2026
+Concern: Left knee pain for two months.
+Pain score: 7 out of 10.
+Associated symptoms: Mild swelling.
+History: Type 2 diabetes mellitus.
+Medication history: Metformin 500 mg twice daily.
+Allergies: No known drug allergies.
+Test mentioned: Knee X-ray.
+This is fictional test data, not a prescription.
+Ensure all text fully within margins and readily legible.
+
+02-handwritten-medical-note.png
+Use case: scientific-educational. Create one portrait raster photograph of a fictional handwritten medical history note for handwriting OCR testing. Single off-white paper page filling the frame, slight natural camera skew, soft edge shadow but sharp readable blue ballpoint handwriting, moderately joined cursive, varying pen pressure. One column with well separated lines, no crossing out, no stamps, no real identities. Printed small header SYNTHETIC TEST DATA. All remaining lines handwritten verbatim:
+Patient: Test Patient B
+26 October 2026
+Dry cough for five days.
+Mild fever and sore throat.
+History of asthma.
+Medication history:
+Salbutamol inhaler as needed.
+Penicillin allergy reported.
+No chest pain.
+Test mentioned: Complete blood count.
+Fictional note - not a prescription.
+Keep every line fully visible. Authentic handwritten appearance, not a uniform cursive computer font.

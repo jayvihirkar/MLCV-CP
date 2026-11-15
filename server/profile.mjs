@@ -3,10 +3,18 @@ import { supabaseConfigured, signedDownload } from './supabase.mjs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { receiveAttachments, storeAttachments, removeAttachments, registerAttachmentUploads, resolveUploadedAttachments } from './attachments.mjs';
+import { registerDocumentRoutes, extractionSummary } from './document-pipeline.mjs';
 
 const kinds = ['condition', 'surgery', 'hospitalization', 'medication', 'allergy', 'vaccination', 'test', 'visit', 'other'];
 const text = (value, limit) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
-export async function readPatientProfiles(file) { return readJson(file, {}); }
+export async function readPatientProfiles(file, includeExtractions = false) {
+  const profiles = await readJson(file, {});
+  if (includeExtractions) {
+    const extractions = await readJson(join(dirname(file), 'document-extractions.json'), {});
+    for (const profile of Object.values(profiles)) for (const event of profile.history || []) for (const item of event.attachments || []) item.extraction = extractionSummary(extractions[item.id]);
+  }
+  return profiles;
+}
 export function accountTimeline(profile, sessions, userId) {
   const intakes = sessions.filter(session => session.userId === userId && (session.triage?.answers?.length || session.responses?.length));
   const timeline = [
@@ -28,8 +36,9 @@ export function validHistoryDate(value) {
   return year >= 1900 && date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
-export function registerProfileRoutes(app, { authenticate, file, readSessions, readReviews, writeReviews }) {
+export function registerProfileRoutes(app, { authenticate, file, readSessions, writeSessions, readReviews, writeReviews }) {
   registerAttachmentUploads(app, authenticate);
+  const documentPipeline = registerDocumentRoutes(app, { authenticate, profileFile: file, readSessions });
   const attachmentDirectory = join(dirname(file), 'attachments');
   const readProfiles = () => readPatientProfiles(file);
   // Serialize updates so saves from different tabs/accounts cannot overwrite one another.
@@ -123,7 +132,7 @@ export function registerProfileRoutes(app, { authenticate, file, readSessions, r
   });
   app.get('/api/profile', authenticate, patientOnly, async (req, res, next) => {
     try {
-      const profiles = await readProfiles();
+      const profiles = await readPatientProfiles(file, true);
       const profile = profiles[req.user.userId] || { details: {}, history: [] };
       const timeline = accountTimeline(profile, await readSessions(), req.user.userId);
       res.json({ ...profile, clarifications: profile.clarifications || [], account: { id: req.user.userId, name: req.user.name, email: req.user.email }, timeline });
@@ -133,7 +142,7 @@ export function registerProfileRoutes(app, { authenticate, file, readSessions, r
     try {
       const input = req.body || {};
       const details = Object.fromEntries(['birthDate', 'sex', 'phone', 'bloodGroup', 'allergies', 'medications', 'conditions', 'notes'].map(key => [key, text(input[key], ['allergies', 'medications', 'conditions', 'notes'].includes(key) ? 3000 : 80)]));
-      if (details.birthDate && (!/^\d{4}-\d{2}-\d{2}$/.test(details.birthDate) || !validHistoryDate(details.birthDate))) return res.status(400).json({ error: 'Enter a valid date of birth.' });
+      if (details.birthDate && (!/^\d{4}-\d{2}-\d{2}$/.test(details.birthDate) || !validHistoryDate(details.birthDate) || details.birthDate > new Date().toISOString().slice(0, 10))) return res.status(400).json({ error: 'Enter a valid date of birth that is not in the future.' });
       if (!['', 'Female', 'Male', 'Intersex', 'Prefer not to say'].includes(details.sex)) return res.status(400).json({ error: 'Choose a valid sex option.' });
       if (!['', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].includes(details.bloodGroup)) return res.status(400).json({ error: 'Choose a valid blood group.' });
       await update(req.user.userId, profile => { profile.details = details; });
@@ -159,7 +168,8 @@ export function registerProfileRoutes(app, { authenticate, file, readSessions, r
       });
       if (!result) return res.status(404).json({ error: 'History entry not found.' });
       committed = true;
-      res.status(req.params.id ? 200 : 201).json({ ok: true });
+      const extractions = await documentPipeline.enqueueMany(req.user.userId, stored, files);
+      res.status(req.params.id ? 200 : 201).json({ ok: true, extractions });
     } catch (error) { if (error.status === 400) res.status(400).json({ error: error.message }); else next(error); }
     finally { if (!committed) await removeAttachments(stored, attachmentDirectory); }
   }
@@ -169,7 +179,8 @@ export function registerProfileRoutes(app, { authenticate, file, readSessions, r
     try {
       const profiles = await readProfiles();
       const allowed = req.user.role === 'Doctor' ? Object.values(profiles) : req.user.role === 'Patient' ? [profiles[req.user.userId]].filter(Boolean) : [];
-      const attachment = allowed.flatMap(profile => profile.history || []).flatMap(event => event.attachments || []).find(item => item.id === req.params.id);
+      const sessionDocuments = (await readSessions()).filter(session => req.user.role === 'Doctor' || session.userId === req.user.userId).flatMap(session => session.documents || []);
+      const attachment = [...allowed.flatMap(profile => profile.history || []).flatMap(event => event.attachments || []), ...sessionDocuments].find(item => item.id === req.params.id);
       if (!attachment) return res.status(404).json({ error: 'Attachment not found.' });
       res.set('Cache-Control', 'private, no-store');
       res.set('X-Content-Type-Options', 'nosniff');
@@ -203,5 +214,5 @@ export function registerProfileRoutes(app, { authenticate, file, readSessions, r
       res.json({ ok: true });
     } catch (error) { next(error); }
   });
-  return { ask, approve };
+  return { ask, approve, documentPipeline, createPatient: (userId, details) => update(userId, profile => { profile.details = details; }) };
 }

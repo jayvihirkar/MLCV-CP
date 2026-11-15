@@ -57,7 +57,7 @@ export function createConversationSidebar({ request, currentSession, isBusy, onO
     const group = item => `<section class="sidebar-chat-group"><div class="sidebar-group-heading"><button type="button" data-action="toggle-group" data-id="${escape(item.id)}" aria-expanded="${!collapsed.has(item.id)}"><span aria-hidden="true">${collapsed.has(item.id) ? '▸' : '▾'}</span> ${escape(item.name)} <small>${data.chats.filter(chat => chat.groupId === item.id).length}</small></button><button type="button" class="sidebar-dots" data-action="group-menu" data-id="${escape(item.id)}" aria-label="Options for group ${escape(item.name)}" aria-expanded="false">${dots}</button><div class="sidebar-row-menu" data-row-menu popover="manual" hidden>${action('rename-group', 'Rename group', item.id)}${action('group-up', 'Move group up', item.id)}${action('group-down', 'Move group down', item.id)}${action('delete-group', 'Delete group', item.id)}</div></div><div ${collapsed.has(item.id) ? 'hidden' : ''}>${data.chats.filter(chat => chat.groupId === item.id).map(chatRow).join('') || '<p class="sidebar-empty">No conversations in this group.</p>'}</div></section>`;
     host.innerHTML = data.groups.map(group).join('') + `${data.groups.length ? '<h3 class="sidebar-ungrouped">Ungrouped</h3>' : ''}` + data.chats.filter(chat => !chat.groupId).map(chatRow).join('');
     if (!data.chats.length && !data.groups.length) host.innerHTML = '<p class="sidebar-empty">Your conversations will appear here.</p>';
-    $('#chatHistory').hidden = data.firstChat;
+    $('#chatHistory').hidden = false;
     onGuide(data.firstChat);
   }
   async function refresh() {

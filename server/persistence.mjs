@@ -68,3 +68,8 @@ export async function takeRecord(name, key, owner = null) {
   return supabaseRequest('/rest/v1/rpc/app_take_record', { method: 'POST', body: { p_namespace: name, p_key: key, p_owner: owner } });
 }
 export async function deleteRecord(name, key) { await takeRecord(name, key); }
+
+export async function ownedRecords(name, userId) {
+  const records = supabaseConfigured() ? Object.entries(await readJson(`${name}.json`, {})) : [...transient].filter(([key]) => key.startsWith(`${name}:`)).map(([key, value]) => [key.slice(name.length + 1), value]);
+  return records.filter(([, value]) => value.userId === userId);
+}

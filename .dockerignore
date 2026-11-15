@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+node_modules
+dist
+data
+tmp
+.venv-document
+worker-data
+**/__pycache__
+**/*.pyc
+tests
+services/**/test_*.py

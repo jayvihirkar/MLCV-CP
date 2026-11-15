@@ -1,3 +1,4 @@
+import { attachmentBody } from './upload-client.js';
 import './profile.css';
 import { attachmentList } from './attachments.js';
 import { clarificationLauncher } from './clarifications.js';
@@ -183,23 +184,9 @@ historyForm.addEventListener('submit', async event => {
   $('#saveHistory').disabled = true;
   status('Saving history…');
   try {
-    const form = new FormData(historyForm);
-    if (!files.length) form.delete('attachments');
-    let body = form;
-    if (files.length) {
-      const plan = await request('/api/profile/attachment-uploads', 'POST', { files: files.map(file => ({ name: file.name, size: file.size })) });
-      if (plan.direct) {
-        const attachmentIds = [];
-        for (let index = 0; index < files.length; index++) {
-          const target = plan.uploads[index];
-          const response = await fetch(target.url, { method: 'PUT', headers: { 'Content-Type': target.mimeType }, body: files[index] });
-          if (!response.ok) throw new Error('Could not upload this document. Select the files and try again.');
-          attachmentIds.push(target.id);
-        }
-        form.delete('attachments');
-        body = { ...Object.fromEntries(form), attachmentIds };
-      }
-    }
+    const fields = new FormData(historyForm);
+    fields.delete('attachments');
+    const body = await attachmentBody(files, Object.fromEntries(fields), request, message => status(message));
     await request(editingId ? `/api/profile/history/${editingId}` : '/api/profile/history', editingId ? 'PUT' : 'POST', body);
     resetHistoryForm();
     await loadProfile();

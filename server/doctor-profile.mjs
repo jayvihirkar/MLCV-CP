@@ -32,7 +32,8 @@ export function addAccountProfile(record, session, profiles, sessions) {
     clarificationTarget: { type: item.source === 'patient' ? 'history' : item.source === 'intake' ? 'intake' : 'profile', id: item.source === 'clarification' ? 'profile' : item.id },
   }));
   const attachments = (profile.history || []).flatMap(event => (event.attachments || []).map(item => ({ ...item, type: item.mimeType, demo: false, source: `Patient-uploaded account history: ${event.title}`, historyId: event.id })));
-  record.documents = [...record.documents, ...attachments];
+  record.documents = [...record.documents, ...(session.documents || []).map(item => ({ ...item, type: item.mimeType, demo: false, source: 'Uploaded for this intake' })), ...attachments];
+  record.submittedAt = session.submittedAt || null;
   record.intake.documents = record.documents;
   for (const event of profile.history || []) record.evidence.push({ id: `ev-history-${event.id}`, label: event.title, kind: 'response', sourceLabel: 'Patient-reported account history', date: event.date || null, excerpt: event.notes || event.title });
   return record;

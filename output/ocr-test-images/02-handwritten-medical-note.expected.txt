@@ -1,0 +1,12 @@
+SYNTHETIC TEST DATA
+Patient: Test Patient B
+26 October 2026
+Dry cough for five days.
+Mild fever and sore throat.
+History of asthma.
+Medication history:
+Salbutamol inhaler as needed.
+Penicillin allergy reported.
+No chest pain.
+Test mentioned: Complete blood count.
+Fictional note - not a prescription.

@@ -1,8 +1,9 @@
 import './attachments.css';
+import { documentExtractionPanel } from './document-extractions.js';
 
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 export function attachmentList(items = [], historyId = null) {
-  return items.length ? `<ul class="attachment-list">${items.map(item => `<li><span class="attachment-name">${escape(item.name)}<small>${Math.max(1, Math.ceil(item.size / 1024))} KB · Patient-uploaded</small></span><button type="button" class="attachment-button" data-download-attachment="${escape(item.id)}" data-attachment-name="${escape(item.name)}">Download</button>${historyId ? `<button type="button" class="attachment-button attachment-remove" data-remove-attachment="${escape(item.id)}" data-history-id="${escape(historyId)}">Remove</button>` : ''}</li>`).join('')}</ul>` : '';
+  return items.length ? `<ul class="attachment-list">${items.map(item => `<li><span class="attachment-name">${escape(item.name)}<small>${Math.max(1, Math.ceil(item.size / 1024))} KB · Patient-uploaded</small></span><button type="button" class="attachment-button" data-download-attachment="${escape(item.id)}" data-attachment-name="${escape(item.name)}">Download</button>${historyId ? `<button type="button" class="attachment-button attachment-remove" data-remove-attachment="${escape(item.id)}" data-history-id="${escape(historyId)}">Remove</button>` : ''}${documentExtractionPanel(item)}</li>`).join('')}</ul>` : '';
 }
 document.addEventListener('click', async event => {
   const button = event.target.closest('[data-download-attachment]');

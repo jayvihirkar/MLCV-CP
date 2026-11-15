@@ -21,9 +21,10 @@ await persistenceScope(async () => {
   }
   // Read every local file and attachment first so missing files fail before writes.
   const sources = {};
-  for (const name of ['users', 'intakes', 'reviews', 'profiles', 'chat-settings']) sources[name] = await local(name, ['users', 'intakes'].includes(name) ? [] : {});
+  for (const name of ['users', 'intakes', 'reviews', 'profiles', 'chat-settings', 'document-extractions']) sources[name] = await local(name, ['users', 'intakes'].includes(name) ? [] : {});
   const attachments = new Map();
-  for (const profile of Object.values(sources.profiles)) for (const event of profile.history || []) for (const item of event.attachments || []) {
+  const attachedTo = (name, value) => name === 'intakes' ? value.documents || [] : name === 'profiles' ? (value.history || []).flatMap(event => event.attachments || []) : [];
+  for (const [name, records] of Object.entries(sources)) for (const value of Object.values(records)) for (const item of attachedTo(name, value)) {
     attachments.set(item.id, { item, bytes: await readFile(join(root, 'data', 'attachments', item.id)) });
   }
   for (const [name, source] of Object.entries(sources)) {
@@ -34,7 +35,7 @@ await persistenceScope(async () => {
     let imported = 0;
     for (const [key, value] of Object.entries(records)) {
       if (Object.hasOwn(previous, key)) continue;
-      if (name === 'profiles') for (const event of value.history || []) for (const attachment of event.attachments || []) {
+      for (const attachment of attachedTo(name, value)) {
         const { item, bytes } = attachments.get(attachment.id);
         try { await uploadObject(item.id, bytes, item.mimeType); }
         catch (error) {

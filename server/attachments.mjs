@@ -4,6 +4,7 @@ import { join, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { supabaseConfigured, uploadObject, downloadObject, deleteObject, signedUpload } from './supabase.mjs';
 import { putRecord, takeRecord } from './persistence.mjs';
+import { removeExtraction } from './document-pipeline.mjs';
 
 const types = { '.pdf': 'application/pdf', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.heic': 'image/heic', '.heif': 'image/heif' };
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 10, fields: 12, fieldSize: 10000 }, fileFilter(_req, file, done) {
@@ -82,12 +83,14 @@ export async function storeAttachments(files, directory) {
     return stored;
   } catch (error) { await removeAttachments(stored, directory); throw error; }
 }
-export async function removeAttachments(items, directory) {
+export async function removeAttachments(items, directory, strict = false) {
   for (const item of items) {
+    try { await removeExtraction(join(directory, '..', 'document-extractions.json'), item.id, strict); }
+    catch (error) { if (strict) throw error; console.warn('Could not clean document extraction metadata.'); }
     try {
       if (supabaseConfigured()) await deleteObject(item.id);
       else await unlink(join(directory, item.id));
     }
-    catch (error) { if (error.code !== 'ENOENT') console.error('Could not remove attachment file:', error.code); }
+    catch (error) { if (error.code !== 'ENOENT' && error.upstreamStatus !== 404) { if (strict) throw error; console.error('Could not remove attachment file:', error.code); } }
   }
 }

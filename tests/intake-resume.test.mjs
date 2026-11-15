@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { pathToFileURL } from 'node:url';
 import { docxFixture } from './docx-fixture.mjs';
 
 test('saved intake survives login and server restart, and rejects other accounts', async () => {
@@ -12,8 +13,8 @@ test('saved intake survives login and server restart, and rejects other accounts
   let server;
   let base;
   async function start() {
-    server = spawn(process.execPath, [join(fixture, 'server/index.mjs')], {
-      env: { ...process.env, PORT: '0', GEMINI_API_KEY: '', SUPABASE_URL: '', SUPABASE_SERVICE_ROLE_KEY: '', VERCEL: '', SEED_DEMO_USERS: 'true' }, stdio: ['ignore', 'pipe', 'pipe'],
+    server = spawn(process.execPath, ['--import', pathToFileURL(join(fixture, 'google-fixture.mjs')).href, join(fixture, 'server/index.mjs')], {
+      env: { ...process.env, PORT: '0', GOOGLE_CLIENT_ID: 'test-client', GOOGLE_CLIENT_SECRET: 'test-secret', GOOGLE_REDIRECT_URI: 'http://localhost:5173/api/auth/google/callback', GEMINI_API_KEY: '', DOCUMENT_PIPELINE_URL: '', DOCUMENT_PIPELINE_TOKEN: '', SUPABASE_URL: '', SUPABASE_SERVICE_ROLE_KEY: '', VERCEL: '', SEED_DEMO_USERS: 'true' }, stdio: ['ignore', 'pipe', 'pipe'],
     });
     const output = await Promise.race([
       once(server.stdout, 'data').then(([chunk]) => String(chunk)),
@@ -50,7 +51,38 @@ test('saved intake survives login and server restart, and rejects other accounts
     for (const dependency of ['express', 'multer']) source = source.replace(`from '${dependency}'`, `from '${import.meta.resolve(dependency)}'`);
     source = source.replace('http://localhost:${port}', 'http://localhost:${appServer.address().port}').replace('app.listen(port,', 'const appServer = app.listen(port,');
     await writeFile(entry, source);
+    await writeFile(join(fixture, 'google-fixture.mjs'), `
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = (url, options) => {
+        if (String(url) === 'https://oauth2.googleapis.com/token') return Promise.resolve(Response.json({access_token:'fixture-google-token'}));
+        if (String(url) === 'https://www.googleapis.com/oauth2/v3/userinfo') return Promise.resolve(Response.json({sub:'google-fixture-subject',email:'google-patient@example.com',email_verified:true,name:'Google Test Patient'}));
+        return realFetch(url, options);
+      };
+    `);
     await start();
+    const googleStart = await fetch(base + '/api/auth/google', { redirect: 'manual' });
+    const googleUrl = new URL(googleStart.headers.get('location'));
+    assert.equal(googleUrl.searchParams.get('redirect_uri'), 'http://localhost:5173/api/auth/google/callback');
+    const googleCallback = '/api/auth/google/callback?code=test-code&state=' + googleUrl.searchParams.get('state');
+    const cookie = googleStart.headers.get('set-cookie').split(';')[0];
+    const googleDone = await fetch(base + googleCallback, { redirect: 'manual', headers: { cookie } });
+    const googleToken = new URLSearchParams(new URL(googleDone.headers.get('location'), base).hash.slice(1)).get('auth_token');
+    assert.ok(googleToken, 'Google returns an app session in a fragment');
+    assert.equal((await (await request('/api/auth/session', googleToken)).json()).user.role, 'Patient');
+    assert.ok((await fetch(base + googleCallback, { redirect: 'manual', headers: { cookie } })).headers.get('location').includes('auth_error'), 'OAuth state cannot be reused');
+    const newPatient = { name: 'Test Registration', email: 'new-patient@example.com', password: 'TestPassword123', birthDate: '1998-04-12', sex: 'Prefer not to say', phone: '1234567890', role: 'Doctor' };
+    assert.equal((await request('/api/auth/signup', '', 'POST', { ...newPatient, birthDate: '2099-01-01' })).status, 400);
+    assert.equal((await request('/api/auth/signup', '', 'POST', { ...newPatient, password: 'short' })).status, 400);
+    const registration = await request('/api/auth/signup', '', 'POST', newPatient);
+    assert.equal(registration.status, 201);
+    const registered = await registration.json();
+    assert.equal(registered.user.role, 'Patient', 'Registration cannot grant doctor access');
+    assert.equal(registered.user.passwordHash, undefined);
+    assert.equal((await (await request('/api/profile', registered.token)).json()).details.birthDate, newPatient.birthDate);
+    assert.equal((await request('/api/doctor/overview', registered.token)).status, 403);
+    assert.equal((await request('/api/auth/account', registered.token, 'DELETE', {})).status, 400, 'Account deletion requires explicit typed confirmation');
+    assert.equal((await request('/api/auth/signup', '', 'POST', newPatient)).status, 409);
+    assert.equal((await request('/api/auth/login', '', 'POST', { email: newPatient.email, password: newPatient.password })).status, 200);
     let patient = await login('ramesh.patel@example.com');
     assert.equal((await request('/api/profile', '')).status, 401);
     assert.equal((await request('/api/profile', patient, 'PUT', { birthDate: '2000-01-01', sex: 'Female', bloodGroup: 'O+', conditions: 'Asthma', allergies: 'Penicillin', medications: 'Profile medication', notes: 'Profile notes', phone: '1234567890' })).status, 200);
@@ -102,6 +134,26 @@ test('saved intake survives login and server restart, and rejects other accounts
     assert.equal((await (await request('/api/conversations', anotherPatient)).json()).groups.length, 0);
     const path = `/api/sessions/${session.id}`;
     const initial = await (await request(`${path}/triage`, patient)).json();
+    const greeting = await (await request(`${path}/turn`, patient, 'POST', { questionId: initial.question.id, answer: 'Hello.' })).json();
+    assert.equal(greeting.accepted, false);
+    assert.equal(greeting.answered.length, 0);
+    assert.equal(greeting.state.chiefComplaint, null);
+    assert.equal(greeting.question.id, initial.question.id);
+    assert.ok(greeting.question.text.includes('health concern'));
+    assert.equal((await request(`${path}/turn`, patient, 'POST', { questionId: 'g-duration', answer: 'Two days' })).status, 409);
+    const afterGreeting = await (await request(path, patient)).json();
+    assert.equal(afterGreeting.transcript[0].answer, 'Hello.');
+    // A conversation saved by the older code must resume at the concern prompt.
+    const oldSessions = JSON.parse(await readFile(join(fixture, 'data/intakes.json')));
+    const oldSession = oldSessions.find(item => item.id === session.id);
+    oldSession.nonAnswers = [];
+    oldSession.triage.chiefComplaint = 'Hello.';
+    oldSession.triage.answers = [{ questionId: initial.question.id, questionText: initial.question.text, label: 'Main concern', answer: 'Hello.' }];
+    oldSession.triage.askedQuestions = [initial.question.id];
+    await writeFile(join(fixture, 'data/intakes.json'), JSON.stringify(oldSessions));
+    const recovered = await (await request(`${path}/triage`, patient)).json();
+    assert.equal(recovered.question.id, initial.question.id);
+    assert.equal(recovered.answered.length, 0);
     const turn = await request(`${path}/turn`, patient, 'POST', { questionId: initial.question.id, answer: 'I have a fever' });
     assert.equal(turn.status, 200);
     const next = await turn.json();
@@ -181,7 +233,9 @@ test('saved intake survives login and server restart, and rejects other accounts
     assert.equal((await request(`/api/profile/history/${historyId}`, patient, 'PUT', { title: 'Updated surgery', kind: 'surgery', date: '2020-03', notes: 'Updated details' })).status, 200);
     const history = await (await request(path, patient)).json();
     assert.equal(history.transcript[0].questionText, initial.question.text);
-    assert.equal(history.transcript[0].answer, 'I have a fever');
+    assert.equal(history.transcript[0].answer, 'Hello.');
+    assert.equal(history.transcript.find(item => item.accepted !== false).questionText, greeting.question.text);
+    assert.equal(history.transcript.find(item => item.accepted !== false).answer, 'I have a fever');
     const restored = await (await request(`${path}/triage`, patient)).json();
     assert.deepEqual(restored.answered, next.answered);
     assert.equal(restored.question.id, next.question.id);
@@ -210,7 +264,7 @@ test('saved intake survives login and server restart, and rejects other accounts
     assert.equal(undone.complete, false);
     assert.equal(undone.question.id, beforeUndo.transcript.at(-1).questionId);
     assert.equal(undone.removedAnswer, beforeUndo.transcript.at(-1).answer);
-    assert.equal(undone.answered.length, beforeUndo.transcript.length - 1);
+    assert.equal(undone.answered.length, beforeUndo.transcript.filter(item => item.accepted !== false).length - 1);
     const newConversation = await (await request('/api/sessions', patient, 'POST', { locale: 'en-IN', patient: 'Another intake' })).json();
     assert.notEqual(newConversation.id, session.id);
     assert.equal((await request(`/api/conversations/${newConversation.id}`, patient, 'PUT', { groupId })).status, 200);
@@ -264,6 +318,21 @@ test('saved intake survives login and server restart, and rejects other accounts
     assert.equal((await request(`/api/profile/attachments/${attached[2].id}`, patient)).status, 404);
     await assert.rejects(readFile(join(fixture, 'data/attachments', attached[2].id)), { code: 'ENOENT' });
     assert.equal((await request('/api/sessions/missing', patient)).status, 404);
+    const deletionLogin = await request('/api/auth/login', '', 'POST', { email: newPatient.email, password: newPatient.password });
+    const deletionToken = (await deletionLogin.json()).token;
+    const extraLogin = await request('/api/auth/login', '', 'POST', { email: newPatient.email, password: newPatient.password });
+    const extraToken = (await extraLogin.json()).token;
+    const disposableSession = await (await request('/api/sessions', deletionToken, 'POST', { locale: 'en-IN' })).json();
+    const disposableUpload = new FormData();
+    disposableUpload.append('attachments', new Blob([proofFiles[1].bytes], { type: 'image/png' }), 'disposable.png');
+    const disposableFile = (await (await fetch(base + `/api/sessions/${disposableSession.id}/documents`, { method: 'POST', headers: { Authorization: `Bearer ${deletionToken}` }, body: disposableUpload })).json()).documents[0];
+    assert.equal((await request('/api/auth/account', deletionToken, 'DELETE', { confirmation: 'DELETE' })).status, 200);
+    assert.equal((await request('/api/auth/session', extraToken)).status, 401, 'Deleting a profile revokes its other login sessions');
+    assert.equal((await request('/api/auth/login', '', 'POST', { email: newPatient.email, password: newPatient.password })).status, 401);
+    assert.ok(!JSON.parse(await readFile(join(fixture, 'data/intakes.json'))).some(item => item.id === disposableSession.id));
+    assert.equal(JSON.parse(await readFile(join(fixture, 'data/profiles.json')))[registered.user.id], undefined);
+    await assert.rejects(readFile(join(fixture, 'data/attachments', disposableFile.id)), { code: 'ENOENT' });
+    assert.equal((await request('/api/profile', patient)).status, 200, 'Deleting one patient retains other accounts');
   } finally {
     if (server) await stop();
     assert.ok(resolve(fixture).startsWith(resolve(tmpdir())));

@@ -1,17 +1,21 @@
+import { removeAttachments } from './attachments.mjs';
 import './environment.mjs';
-import { readJson, writeJson, persistenceScope, persistenceMiddleware, putRecord, getRecord, takeRecord, deleteRecord } from './persistence.mjs';
-import { supabaseConfigured } from './supabase.mjs';
+import { readJson, writeJson, persistenceScope, persistenceMiddleware, putRecord, getRecord, takeRecord, deleteRecord, ownedRecords } from './persistence.mjs';
+import { supabaseConfigured, deleteObject } from './supabase.mjs';
 import express from 'express';
 import multer from 'multer';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 import { mockPatients, mockDoctorProfiles } from './mock-data.mjs';
-import { registerProfileRoutes, readPatientProfiles } from './profile.mjs';
+import { registerProfileRoutes, readPatientProfiles, validHistoryDate } from './profile.mjs';
 import { addAccountProfile } from './doctor-profile.mjs';
 import { registerConversationRoutes } from './conversations.mjs';
 import { createTriageState, resolveQuestion, finalise, applyAnswer, candidateQuestions, redFlagOptions, flagRedFlags, escalationMessage, questionById } from './triage.mjs';
-import { geminiConfigured, analyseTurn, transcribeWithGemini, geminiSttModel } from './llm.mjs';
+import { geminiConfigured, intakeLlmConfigured, intakeProvider, analyseTurn, transcribeWithGemini, geminiSttModel } from './llm.mjs';
+import { answerNeedsClarification, clarificationPrompt, classifyComplaint } from './triage.mjs';
+import { registerIntakeDocumentRoutes } from './intake-documents.mjs';
+import { documentPipelineConfigured, removeExtraction } from './document-pipeline.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dataFile = join(root, 'data', 'intakes.json');
@@ -53,6 +57,7 @@ async function writeUsers(users) { await writeJson(usersFile, users); }
 
 async function ensureUsers() {
   let users = await readUsers();
+  const disabledSeeds = await readJson(join(root, 'data', 'disabled-demo-users.json'), {});
   if (!Array.isArray(users)) users = [];
   const seeds = [
     { name: 'Ramesh Patel', email: 'ramesh.patel@example.com', role: 'Patient' },
@@ -60,6 +65,7 @@ async function ensureUsers() {
   ];
   let changed = false;
   for (const seed of seeds) {
+    if (disabledSeeds[`seed-${tokenKey(seed.email).slice(0, 32)}`]) continue;
     if (users.some((entry) => String(entry.email).toLowerCase() === seed.email.toLowerCase())) continue;
     const salt = randomBytes(16).toString('hex');
     users.push({ id: `seed-${tokenKey(seed.email).slice(0, 32)}`, ...seed, salt, passwordHash: hashPassword('meditrace123', salt), createdAt: new Date().toISOString() });
@@ -82,7 +88,7 @@ function readToken(req) {
 async function authenticate(req, res, next) {
   const token = readToken(req);
   const record = token && await getRecord('auth-tokens', tokenKey(token));
-  if (!record || record.expiresAt < Date.now()) {
+  if (!record || record.expiresAt < Date.now() || !(await readUsers()).some(user => user.id === record.userId)) {
     if (record) await deleteRecord('auth-tokens', tokenKey(token));
     return res.status(401).json({ error: 'Your session has expired. Please sign in again.' });
   }
@@ -103,10 +109,11 @@ app.use(async (_req, _res, next) => { await initialize(); next(); });
 app.use('/api', (_req, res, next) => { res.set('Cache-Control', 'private, no-store'); next(); });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024 } });
 app.use(express.json({ limit: '200kb' }));
-const profileService = registerProfileRoutes(app, { authenticate, file: join(root, 'data', 'profiles.json'), readSessions, readReviews, writeReviews });
+const profileService = registerProfileRoutes(app, { authenticate, file: join(root, 'data', 'profiles.json'), readSessions, writeSessions, readReviews, writeReviews });
+registerIntakeDocumentRoutes(app, { authenticate, readSessions, writeSessions, directory: join(root, 'data', 'attachments'), documentPipeline: profileService.documentPipeline });
 const conversationService = registerConversationRoutes(app, { authenticate, file: join(root, 'data', 'chat-settings.json'), readSessions });
 
-app.get('/api/health', (_req, res) => res.json({ ok: true, persistence: supabaseConfigured() ? 'supabase' : 'local', directUploads: supabaseConfigured(), maxAudioBytes: 4 * 1024 * 1024, elevenLabsConfigured: Boolean(process.env.ELEVENLABS_API_KEY), geminiConfigured: geminiConfigured(), sttModel: geminiSttModel(), googleConfigured: googleConfigured(), voiceId: voiceId() }));
+app.get('/api/health', (_req, res) => res.json({ ok: true, documentPipelineConfigured: documentPipelineConfigured(), persistence: supabaseConfigured() ? 'supabase' : 'local', directUploads: supabaseConfigured(), maxAudioBytes: 4 * 1024 * 1024, elevenLabsConfigured: Boolean(process.env.ELEVENLABS_API_KEY), geminiConfigured: geminiConfigured(), sttModel: geminiSttModel(), googleConfigured: googleConfigured(), voiceId: voiceId() }));
 
 app.get('/api/auth/providers', (_req, res) => res.json({ google: googleConfigured() }));
 
@@ -121,9 +128,73 @@ app.post('/api/auth/login', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+let registrationPending = Promise.resolve();
+app.post('/api/auth/signup', async (req, res, next) => {
+  const previous = registrationPending;
+  let release;
+  registrationPending = new Promise(resolve => { release = resolve; });
+  await previous;
+  try {
+    const name = String(req.body.name || '').trim();
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const password = String(req.body.password || '');
+    const { birthDate, sex } = req.body;
+    const phone = String(req.body.phone || '').trim();
+    if (name.length < 2 || name.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return res.status(400).json({ error: 'Enter your full name and a valid email address.' });
+    if (password.length < 10 || password.length > 128) return res.status(400).json({ error: 'Use a password between 10 and 128 characters.' });
+    if (typeof birthDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(birthDate) || !validHistoryDate(birthDate) || birthDate > new Date().toISOString().slice(0, 10)) return res.status(400).json({ error: 'Enter a valid date of birth that is not in the future.' });
+    if (!['Female', 'Male', 'Intersex', 'Prefer not to say'].includes(sex) || phone.length > 80) return res.status(400).json({ error: 'Check your sex and phone details.' });
+    const users = await readUsers();
+    if (users.some(user => user.email.toLowerCase() === email)) return res.status(409).json({ error: 'An account with this email already exists. Please sign in.' });
+    const salt = randomBytes(16).toString('hex');
+    const user = { id: `patient-${tokenKey(email)}`, name, email, role: 'Patient', salt, passwordHash: hashPassword(password, salt), createdAt: new Date().toISOString() };
+    // Registration cannot grant a clinician role supplied by the browser.
+    users.push(user);
+    await writeUsers(users);
+    await profileService.createPatient(user.id, { birthDate, sex, phone });
+    res.status(201).json({ token: await issueToken(user), user: publicUser(user) });
+  } catch (error) { next(error); }
+  finally { release(); }
+});
+
 app.get('/api/auth/session', authenticate, (req, res) => res.json({ user: { id: req.user.userId, name: req.user.name, email: req.user.email, role: req.user.role, specialty: req.user.specialty || null } }));
 
 app.post('/api/auth/logout', authenticate, async (req, res) => { await deleteRecord('auth-tokens', tokenKey(req.token)); res.json({ ok: true }); });
+
+app.delete('/api/auth/account', authenticate, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'Patient') return res.status(403).json({ error: 'Profile deletion is available to patient accounts only.' });
+    if (req.body?.confirmation !== 'DELETE') return res.status(400).json({ error: 'Type DELETE to confirm profile deletion.' });
+    const userId = req.user.userId;
+    const sessions = await readSessions();
+    const own = sessions.filter(session => session.userId === userId);
+    const profileFile = join(root, 'data', 'profiles.json');
+    const profiles = await readPatientProfiles(profileFile);
+    const attachments = [...own.flatMap(session => session.documents || []), ...(profiles[userId]?.history || []).flatMap(event => event.attachments || [])];
+    // Stop on storage/worker cleanup errors; never report full deletion prematurely.
+    await removeAttachments(attachments, join(root, 'data', 'attachments'), true);
+    const extractionFile = join(root, 'data', 'document-extractions.json');
+    for (const [id, record] of Object.entries(await readJson(extractionFile, {}))) if (record.userId === userId) await removeExtraction(extractionFile, id, true);
+    for (const [key, ticket] of await ownedRecords('upload-tickets', userId)) {
+      if (supabaseConfigured() && ticket.key) await deleteObject(ticket.key);
+      await takeRecord('upload-tickets', key, userId);
+    }
+    await writeSessions(sessions.filter(session => session.userId !== userId));
+    delete profiles[userId]; await writeJson(profileFile, profiles);
+    const reviews = await readReviews();
+    for (const session of own) delete reviews[`INTAKE-${session.id.slice(0, 8)}`];
+    await writeReviews(reviews);
+    const settingsFile = join(root, 'data', 'chat-settings.json');
+    const settings = await readJson(settingsFile, {}); delete settings[userId]; await writeJson(settingsFile, settings);
+    if (userId.startsWith('seed-')) {
+      const disabledFile = join(root, 'data', 'disabled-demo-users.json');
+      const disabled = await readJson(disabledFile, {}); disabled[userId] = true; await writeJson(disabledFile, disabled);
+    }
+    const users = await readUsers(); await writeUsers(users.filter(user => user.id !== userId));
+    for (const [key] of await ownedRecords('auth-tokens', userId)) await deleteRecord('auth-tokens', key);
+    res.json({ ok: true });
+  } catch (error) { next(error); }
+});
 
 app.get('/api/auth/google', async (req, res) => {
   if (!googleConfigured()) return res.status(503).json({ error: 'Google sign-in is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env.' });
@@ -156,7 +227,7 @@ app.get('/api/auth/google/callback', async (req, res, next) => {
     if (!profileResponse.ok) return res.redirect('/?auth_error=google');
     const profile = await profileResponse.json();
     const email = String(profile.email || '').trim().toLowerCase();
-    if (!email || profile.email_verified === false) return res.redirect('/?auth_error=google');
+    if (!email || profile.email_verified !== true || typeof profile.sub !== 'string') return res.redirect('/?auth_error=google');
     const users = await readUsers();
     let user = users.find((entry) => entry.email.toLowerCase() === email);
     if (!user) {
@@ -164,7 +235,8 @@ app.get('/api/auth/google/callback', async (req, res, next) => {
       users.push(user);
       await writeUsers(users);
     }
-    res.redirect(`/?auth_token=${encodeURIComponent(await issueToken(user))}`);
+    res.set('Referrer-Policy', 'no-referrer');
+    res.redirect(`/#auth_token=${encodeURIComponent(await issueToken(user))}`);
   } catch (error) { next(error); }
 });
 
@@ -205,11 +277,13 @@ app.delete('/api/sessions/:id', authenticate, async (req, res, next) => {
     const sessions = await readSessions();
     const index = sessions.findIndex((session) => session.id === req.params.id && session.userId === req.user.userId);
     if (index === -1) return res.status(404).json({ error: 'Intake session not found.' });
-    if (req.query.onlyIfEmpty === '1' && ((sessions[index].triage?.answers?.length || 0) > 0 || (sessions[index].responses?.length || 0) > 0)) return res.json({ ok: true, deleted: false });
+    if (req.query.onlyIfEmpty === '1' && ((sessions[index].triage?.answers?.length || 0) > 0 || (sessions[index].responses?.length || 0) > 0 || (sessions[index].documents?.length || 0) > 0)) return res.json({ ok: true, deleted: false });
     const reviews = await readReviews();
     delete reviews[`INTAKE-${String(sessions[index].id).slice(0, 8)}`];
+    const removedDocuments = sessions[index].documents || [];
     sessions.splice(index, 1);
     await writeSessions(sessions);
+    await removeAttachments(removedDocuments, join(root, 'data', 'attachments'));
     await writeReviews(reviews);
     await conversationService.forget(req.user.userId, req.params.id);
     res.json({ ok: true, deleted: true });
@@ -235,6 +309,8 @@ app.post('/api/sessions/:id/undo', authenticate, async (req, res, next) => {
       session.triage = rebuilt;
     }
     session.triage.nextQuestionId = removed.questionId;
+    session.submittedAt = null;
+    session.nonAnswers = (session.nonAnswers || []).filter(item => item.beforeAnswerCount <= session.triage.answers.length);
     session.responses = (session.responses || []).filter((answer) => answer.questionId !== removed.questionId);
     session.updatedAt = new Date().toISOString();
     // A clinician's previous decision no longer describes this revised intake.
@@ -256,12 +332,15 @@ app.get('/api/sessions/:id', authenticate, async (req, res, next) => {
   try {
     const session = findSession(await readSessions(), req.params.id);
     if (!session || session.userId !== req.user.userId) return res.status(404).json({ error: 'Intake session not found.' });
+    ensureTriage(session);
     const locale = String(session.locale || 'en').split('-')[0];
-    const transcript = (session.triage?.answers || session.responses || []).map((answer) => {
-      const question = questionById(answer.questionId);
+    const answers = session.triage?.answers || session.responses || [];
+    const transcript = answers.flatMap((answer, index) => {
+      const question = questionById(answer.questionId, session.triage);
       const text = question?.text;
-      return { ...answer, questionText: answer.questionText || (typeof text === 'string' ? text : text?.[locale] || text?.en) || answer.label || 'Previous question' };
+      return [...(session.nonAnswers || []).filter(item => item.beforeAnswerCount === index), { ...answer, questionText: answer.questionText || (typeof text === 'string' ? text : text?.[locale] || text?.en) || answer.label || 'Previous question' }];
     });
+    transcript.push(...(session.nonAnswers || []).filter(item => item.beforeAnswerCount === answers.length));
     res.json({ ...session, transcript });
   } catch (error) { next(error); }
 });
@@ -284,6 +363,20 @@ app.put('/api/sessions/:id/responses/:questionId', authenticate, async (req, res
 
 function ensureTriage(session) {
   if (!session.triage) session.triage = createTriageState({ adaptive: String(session.locale || 'en').toLowerCase().startsWith('en') });
+  const previous = session.triage;
+  if (previous.adaptive && !previous.escalated && previous.complaint === 'breathing' && classifyComplaint(previous.chiefComplaint) === 'cough') {
+    previous.complaint = 'cough'; previous.complaintLabel = 'Cough'; previous.complete = false; previous.nextQuestionId = null;
+    if (previous.answered['br-worsening']?.value === false && previous.answered['br-chest-confusion']?.value === false) previous.reprompt = { questionId: 'cough-safety', text: 'Have you coughed up any blood?' };
+  }
+  // Repair the old single-greeting bug on resume without rewriting any real
+  // symptom answers or an escalated record. Preserve the greeting in the chat.
+  if (previous.adaptive && !previous.escalated && previous.answers.length === 1 && previous.chiefComplaint && answerNeedsClarification(questionById('chief-complaint'), previous.chiefComplaint)) {
+    session.nonAnswers = [...(session.nonAnswers || []), { ...previous.answers[0], accepted: false, beforeAnswerCount: 0, questionText: previous.answers[0].questionText || questionById('chief-complaint').text }];
+    session.triage = createTriageState();
+    session.triage.reprompt = { questionId: 'chief-complaint', text: clarificationPrompt(questionById('chief-complaint'), session.locale || 'en') };
+    session.undoHistory = [];
+    session.submittedAt = null;
+  }
   return session.triage;
 }
 
@@ -298,8 +391,11 @@ function triagePayload(session) {
     remaining: resolved.complete || resolved.escalated ? 0 : candidateQuestions(state).length,
     complete: resolved.complete,
     escalated: resolved.escalated,
-    step: resolved.complete ? 4 : ([resolved.question, ...state.answers.map((answer) => questionById(answer.questionId))].some((question) => question?.phase === 'history') ? 3 : 2),
+    step: resolved.complete ? 4 : ([resolved.question, ...state.answers.map((answer) => questionById(answer.questionId, state))].some((question) => question?.phase === 'history') ? 3 : 2),
     question: resolved.question || null,
+    submittedAt: session.submittedAt || null,
+    documentCount: (session.documents || []).length,
+    assistant: state.assistant || null,
   };
   if (resolved.escalated) payload.escalation = escalationMessage(state);
   return payload;
@@ -325,8 +421,18 @@ app.post('/api/sessions/:id/turn', authenticate, async (req, res, next) => {
 
     const current = resolveQuestion(state, session.locale || 'en');
     const requestedId = String(req.body.questionId || '').trim();
-    const question = requestedId ? questionById(requestedId) : current.question;
+    if (requestedId && requestedId !== current.question?.id) return res.status(409).json({ error: 'This question is no longer current. Refresh the conversation and try again.' });
+    const question = current.question && questionById(current.question.id, state);
     if (!question) return res.json(triagePayload(session));
+
+    let needsClarification = answerNeedsClarification(question, answer);
+    if (needsClarification) {
+      state.reprompt = { questionId: question.id, text: clarificationPrompt(question, session.locale || 'en') };
+      session.nonAnswers = [...(session.nonAnswers || []), { questionId: question.id, questionText: current.question.text, answer, accepted: false, beforeAnswerCount: state.answers.length, at: new Date().toISOString() }].slice(-30);
+      session.updatedAt = new Date().toISOString();
+      await writeSessions(sessions);
+      return res.json({ ...triagePayload(session), accepted: false });
+    }
 
     session.undoHistory = session.undoHistory || [];
     session.undoHistory.push(structuredClone(state));
@@ -335,23 +441,57 @@ app.post('/api/sessions/:id/turn', authenticate, async (req, res, next) => {
     const locale = String(session.locale || 'en').split('-')[0];
     state.answers[state.answers.length - 1].questionText = typeof questionText === 'string' ? questionText : questionText?.[locale] || questionText?.en;
     session.updatedAt = new Date().toISOString();
+    session.submittedAt = null;
 
-    if (!state.escalated && geminiConfigured()) {
+    if (!state.escalated && state.adaptive && intakeLlmConfigured()) {
       const candidates = candidateQuestions(state);
       const redFlags = redFlagOptions(state);
-      if (candidates.length) {
-        const analysis = await analyseTurn({ state, question, answerText: answer, candidates, redFlags });
+      const safety = candidates.find(item => item.phase === 'red-flag');
+      if (safety) { state.nextQuestionId = safety.id; state.assistant = { mode: 'safety' }; }
+      else {
+        const analysis = await analyseTurn({ state, question: { ...question, text: state.answers.at(-1).questionText }, answerText: answer, candidates, redFlags });
         if (analysis) {
+          if (analysis.answerRelevant === false && !question.redFlag) {
+            const restored = session.undoHistory.pop();
+            restored.reprompt = { questionId: question.id, text: clarificationPrompt(current.question, session.locale || 'en') };
+            session.triage = restored;
+            session.nonAnswers = [...(session.nonAnswers || []), { questionId: question.id, questionText: current.question.text, answer, accepted: false, beforeAnswerCount: restored.answers.length, at: new Date().toISOString() }].slice(-30);
+            await writeSessions(sessions);
+            return res.json({ ...triagePayload(session), accepted: false });
+          }
+          state.assistant = { mode: intakeProvider() };
           if (analysis.redFlagIds.length) flagRedFlags(state, analysis.redFlagIds, answer);
           if (!state.escalated && candidates.some((item) => item.id === analysis.nextQuestionId)) state.nextQuestionId = analysis.nextQuestionId;
+          if (!state.escalated && analysis.nextQuestion) {
+            state.generatedQuestions ||= []; state.generatedQuestions.push(analysis.nextQuestion);
+            state.aiQuestion = analysis.nextQuestion; state.nextQuestionId = analysis.nextQuestion.id;
+          }
+          if (!state.escalated && analysis.complete) state.aiComplete = true;
+        } else {
+          state.assistant = { mode: 'rules', message: 'Personalized follow-ups are temporarily unavailable. Using standard intake questions for now.' };
         }
       }
+    } else if (state.adaptive && !intakeLlmConfigured()) {
+      state.assistant = { mode: 'rules', message: 'Personalized follow-ups are unavailable. Using standard intake questions.' };
     }
 
     finalise(state);
     await writeSessions(sessions);
     res.json(triagePayload(session));
   } catch (error) { next(error); }
+});
+
+app.post('/api/sessions/:id/submit', authenticate, async (req, res) => {
+  const sessions = await readSessions();
+  const session = findSession(sessions, req.params.id);
+  if (!session || session.userId !== req.user.userId) return res.status(404).json({ error: 'Intake session not found.' });
+  const state = ensureTriage(session);
+  finalise(state);
+  if (!state.complete || state.escalated) return res.status(409).json({ error: 'Finish the intake questions before sending for review.' });
+  session.submittedAt ||= new Date().toISOString();
+  session.updatedAt = session.submittedAt;
+  await writeSessions(sessions);
+  res.json(triagePayload(session));
 });
 
 app.post('/api/narration', authenticate, async (req, res, next) => {
@@ -456,6 +596,9 @@ function triageRecord(session) {
     flags.push({ id: 'fl-intake-incomplete', title: 'Incomplete intake', detail: 'The patient has not finished the adaptive intake.', why: 'Some history sections are still missing and may need to be gathered at the visit.', kind: 'ai_inference', severity: 'medium', sourceLabel: 'Intake completeness check', evidenceId: null });
   }
   const hpiParts = [];
+  const generated = answers.filter(item => item.questionId.startsWith('ai-'));
+  for (const item of generated.filter(item => questionById(item.questionId, triage)?.section !== 'history')) hpiParts.push(`${item.label}: ${item.answer}`);
+  const generatedHistory = generated.filter(item => questionById(item.questionId, triage)?.section === 'history');
   if (triage.duration) hpiParts.push(`Duration: ${triage.duration}.`);
   if (associated) hpiParts.push(`Associated symptoms reported: ${associated}.`);
   const meds = answerFor('cp-medications') || answerFor('br-medications') || answerFor('ha-medications') || answerFor('fv-medications') || answerFor('ap-medications') || answerFor('df-medications');
@@ -483,9 +626,9 @@ function triageRecord(session) {
       model: 'MediTrace adaptive intake (structured from patient responses)',
       sections: [
         { id: 'chief-complaint', title: 'Chief complaint', body: triage.chiefComplaint || 'Not provided', sources: evFor('chief-complaint') },
-        { id: 'hpi', title: 'History of present illness', body: hpiParts.join(' ') || 'Not provided', sources: [] },
+        { id: 'hpi', title: 'History of present illness', body: hpiParts.join(' ') || 'Not provided', sources: [...evFor('chief-complaint'), ...generated.filter(item => questionById(item.questionId, triage)?.section !== 'history').flatMap(item => evFor(item.questionId))] },
         { id: 'red-flags', title: 'Reported warning signs', body: escalated ? (triage.redFlags || []).map((flag) => flag.label).join('; ') : 'None reported.', sources: [] },
-        { id: 'medications-allergies', title: 'Medications & allergies', body: `Medications: ${meds || 'Not provided'}. Allergies: ${allergies || 'Not provided'}.`, sources: [] },
+        { id: 'medications-allergies', title: 'History, medications & allergies', body: generatedHistory.length ? generatedHistory.map(item => `${item.label}: ${item.answer}`).join('\n') : `Medications: ${meds || 'Not provided'}. Allergies: ${allergies || 'Not provided'}.`, sources: generatedHistory.flatMap(item => evFor(item.questionId)) },
         { id: 'other', title: 'Other details', body: other || 'Not provided', sources: [] },
       ],
     },
@@ -564,7 +707,8 @@ function realRecord(session) {
 }
 
 function buildRecordIndex(sessions, profiles = {}) {
-  return [...mockPatients.map(mockRecord), ...sessions.map(session => addAccountProfile(realRecord(session), session, profiles, sessions))];
+  const visibleSessions = sessions.filter(session => !process.env.DOCTOR_RECORDS_SINCE || new Date(session.createdAt) >= new Date(process.env.DOCTOR_RECORDS_SINCE));
+  return [...(process.env.SHOW_DEMO_PATIENTS === 'true' ? mockPatients.map(mockRecord) : []), ...visibleSessions.map(session => addAccountProfile(realRecord(session), session, profiles, sessions))];
 }
 
 function emptyReview(id) { return { patientId: id, sections: {}, decision: null, note: '', updatedAt: null, approvedAt: null }; }
@@ -599,7 +743,7 @@ function toQueueItem(record, reviews) {
 
 app.get('/api/doctor/overview', authenticate, requireDoctor, async (_req, res, next) => {
   try {
-    const [sessions, reviews, profiles] = await Promise.all([readSessions(), readReviews(), readPatientProfiles(join(root, 'data', 'profiles.json'))]);
+    const [sessions, reviews, profiles] = await Promise.all([readSessions(), readReviews(), readPatientProfiles(join(root, 'data', 'profiles.json'), true)]);
     const records = buildRecordIndex(sessions, profiles);
     const queue = records.map((record) => toQueueItem(record, reviews)).sort((a, b) => new Date(a.appointment) - new Date(b.appointment));
     const stats = {
@@ -616,7 +760,7 @@ app.get('/api/doctor/overview', authenticate, requireDoctor, async (_req, res, n
 
 app.get('/api/doctor/patients/:id', authenticate, requireDoctor, async (req, res, next) => {
   try {
-    const [sessions, reviews, profiles] = await Promise.all([readSessions(), readReviews(), readPatientProfiles(join(root, 'data', 'profiles.json'))]);
+    const [sessions, reviews, profiles] = await Promise.all([readSessions(), readReviews(), readPatientProfiles(join(root, 'data', 'profiles.json'), true)]);
     const record = buildRecordIndex(sessions, profiles).find((item) => item.id === req.params.id);
     if (!record) return res.status(404).json({ error: 'Patient record not found.' });
     const review = reviews[record.id] || emptyReview(record.id);
@@ -688,7 +832,7 @@ app.get('/api/doctor/patients/:id/clarifications', authenticate, requireDoctor, 
   try {
     const session = (await readSessions()).find(item => `INTAKE-${String(item.id).slice(0, 8)}` === req.params.id);
     if (!session?.userId) return res.json({ threads: [] });
-    const profiles = await readPatientProfiles(join(root, 'data', 'profiles.json'));
+    const profiles = await readPatientProfiles(join(root, 'data', 'profiles.json'), true);
     res.json({ threads: profiles[session.userId]?.clarifications || [] });
   } catch (error) { next(error); }
 });
@@ -713,6 +857,16 @@ app.use(express.static(dist));
 app.use((_req, res) => res.sendFile(join(dist, 'index.html')));
 const port = process.env.PORT || 3001;
 if (!process.env.VERCEL && process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  app.listen(port, () => console.log(`MediTrace API listening on http://localhost:${port}`));
+  // PORT=0 asks Node to select a free port. Report the bound port so local
+  // tooling (and the integration harness) can connect to the actual server.
+  app.listen(port, function () {
+    const boundPort = this.address()?.port;
+    if (!boundPort) {
+      console.error(`MediTrace API could not bind to port ${port}.`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`MediTrace API listening on http://localhost:${boundPort}`);
+  });
 }
 export default app;

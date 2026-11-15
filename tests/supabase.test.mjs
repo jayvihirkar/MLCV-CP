@@ -64,7 +64,7 @@ test('cloud records, auth and private uploads work across server instances', asy
   fixture.listen(0, '127.0.0.1'); await once(fixture, 'listening');
   const storageUrl = `http://127.0.0.1:${fixture.address().port}`;
   const previousEnv = { ...process.env };
-  Object.assign(process.env, { VERCEL: '1', SUPABASE_URL: storageUrl, SUPABASE_SERVICE_ROLE_KEY: 'test-service-role', SUPABASE_STORAGE_BUCKET: 'meditrace-attachments', SEED_DEMO_USERS: 'true', GOOGLE_CLIENT_ID: 'test-client', GOOGLE_CLIENT_SECRET: 'test-secret' });
+  Object.assign(process.env, { VERCEL: '1', DOCUMENT_PIPELINE_URL: '', DOCUMENT_PIPELINE_TOKEN: '', SUPABASE_URL: storageUrl, SUPABASE_SERVICE_ROLE_KEY: 'test-service-role', SUPABASE_STORAGE_BUCKET: 'meditrace-attachments', SEED_DEMO_USERS: 'true', GOOGLE_CLIENT_ID: 'test-client', GOOGLE_CLIENT_SECRET: 'test-secret' });
   const servers = [];
   t.after(async () => {
     await Promise.all([...servers, fixture].map(server => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); })));

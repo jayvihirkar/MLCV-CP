@@ -1,5 +1,6 @@
 import './doctor.css';
 import { attachmentList } from './attachments.js';
+import { documentExtractionPanel } from './document-extractions.js';
 import { clarificationLauncher } from './clarifications.js';
 
 /* ------------------------------------------------------------------------- */
@@ -140,6 +141,7 @@ function renderTopbar() {
       <p>${esc(subtitle)}</p>
     </div>
     <div class="dc-topbar-spacer"></div>
+    <button type="button" class="dc-btn ghost sm" data-open-settings>${icon('settings')}Settings</button>
     <button type="button" class="dc-btn ghost sm" data-act="refresh-data">${icon('refresh-cw')}Refresh data</button>
     <span class="dc-chip-date">${icon('calendar-days')}<span>${esc(fmtDate(new Date().toISOString()))}</span></span>`;
 }
@@ -573,6 +575,7 @@ function documentsCard(patient) {
             <div><b>${esc(doc.name)}</b><small>${esc(doc.type || 'Document')} · uploaded ${esc(fmtDate(doc.uploadedAt))} · ${esc(doc.source || '')}</small></div>
             <span class="dc-doc-tag">${doc.demo ? badge(['Demo', 'warn']) : badge(['Recorded', 'ok'])}</span>
             ${doc.mimeType ? `<button type="button" class="attachment-button" data-download-attachment="${esc(doc.id)}" data-attachment-name="${esc(doc.name)}">Download</button>` : ''}
+            ${documentExtractionPanel(doc)}
           </div>`).join('') : '<p class="dc-not-provided">No documents uploaded with this intake.</p>'}
       </div>
     </div>`;

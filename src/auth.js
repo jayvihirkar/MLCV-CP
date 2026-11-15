@@ -2,6 +2,8 @@ import './style.css';
 import { startIntake, saveBeforeSignOut } from './main.js';
 import { startDoctorApp } from './doctor.js';
 import { startPreferences } from './preferences.js';
+import './registration.css';
+import './birth-date.js';
 
 const TOKEN_KEY = 'meditrace.token';
 const LOCALE_KEY = 'meditrace.locale';
@@ -113,7 +115,15 @@ function applyLoginTranslations() {
   if (!submitButton.disabled) renderSubmit(false);
 }
 
-function enterApp(user) {
+async function enterApp(user, profileReady = false) {
+  if (user?.role === 'Patient' && !profileReady) {
+    try {
+      const response = await fetch('/api/profile', { headers: { Authorization: `Bearer ${storedToken()}` } });
+      if (!response.ok) throw new Error('Could not load your basic information. Please sign in again.');
+      const profile = await response.json();
+      if (!profile.details?.birthDate) { showRegistration(user, profile.details || {}); return; }
+    } catch (error) { showError(error.message); renderSubmit(false); return; }
+  }
   document.body.classList.add('authenticated');
   startPreferences(user);
   if (window.lucide) window.lucide.createIcons();
@@ -168,13 +178,14 @@ async function login(event) {
 
 function consumeUrlAuth() {
   const url = new URL(window.location.href);
-  const token = url.searchParams.get('auth_token');
+  const token = new URLSearchParams(url.hash.slice(1)).get('auth_token') || url.searchParams.get('auth_token');
   const error = url.searchParams.get('auth_error');
   if (!token && !error) return null;
   url.searchParams.delete('auth_token');
   url.searchParams.delete('auth_error');
+  if (new URLSearchParams(url.hash.slice(1)).has('auth_token')) url.hash = '';
   window.history.replaceState({}, '', url.pathname + url.search + url.hash);
-  if (token) { localStorage.setItem(TOKEN_KEY, token); return { token }; }
+  if (token) { saveToken(token, true); return { token }; }
   return { error };
 }
 
@@ -282,3 +293,43 @@ applyLoginTranslations();
 if (window.lucide) window.lucide.createIcons();
 configureProviders();
 restoreSession();
+
+const signupForm = $('#signupForm');
+let onboardingUser = null, onboardingDetails = {};
+function showRegistration(user = null, details = {}) {
+  onboardingUser = user; onboardingDetails = details;
+  form.hidden = true; signupForm.hidden = false;
+  $('#signupTitle').textContent = user ? 'Complete your basic details' : 'Create your account';
+  $('#signupSubmit').textContent = user ? 'Save details & continue' : 'Create account & continue';
+  $('#signupCredentials').hidden = Boolean(user);
+  for (const id of ['signupEmail', 'signupPassword', 'signupConfirm']) { $( '#' + id).required = !user; $( '#' + id).disabled = Boolean(user); }
+  $('#signupName').value = user?.name || ''; $('#signupName').readOnly = Boolean(user);
+  $('#signupBirthDate').value = details.birthDate || ''; $('#signupBirthDate').max = new Date().toISOString().slice(0, 10);
+  $('#signupSex').value = details.sex || ''; $('#signupPhone').value = details.phone || '';
+  $('#signupError').hidden = true;
+  $('#signupName').focus();
+}
+$('#openSignup').addEventListener('click', () => showRegistration());
+$('#backToLogin').addEventListener('click', () => {
+  if (onboardingUser) { clearToken(); onboardingUser = null; }
+  signupForm.hidden = true; form.hidden = false; renderSubmit(false);
+});
+signupForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const error = $('#signupError'), button = $('#signupSubmit'); error.hidden = true;
+  if (!onboardingUser && $('#signupPassword').value !== $('#signupConfirm').value) { error.textContent = 'Passwords do not match.'; error.hidden = false; return; }
+  const body = Object.fromEntries(new FormData(signupForm));
+  button.disabled = true; button.textContent = 'Saving…';
+  try {
+    const response = await fetch(onboardingUser ? '/api/profile' : '/api/auth/signup', {
+      method: onboardingUser ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json', ...(onboardingUser ? { Authorization: `Bearer ${storedToken()}` } : {}) },
+      body: JSON.stringify(onboardingUser ? { ...onboardingDetails, birthDate: body.birthDate, sex: body.sex, phone: body.phone } : body),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Could not save your details.');
+    if (!onboardingUser) saveToken(payload.token, rememberInput.checked);
+    await enterApp(onboardingUser || payload.user, true);
+  } catch (failure) { error.textContent = failure.message; error.hidden = false; }
+  finally { button.disabled = false; button.textContent = onboardingUser ? 'Save details & continue' : 'Create account & continue'; }
+});
