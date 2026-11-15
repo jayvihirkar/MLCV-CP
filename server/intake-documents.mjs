@@ -27,7 +27,7 @@ export function registerIntakeDocumentRoutes(app, { authenticate, readSessions, 
       session.updatedAt = new Date().toISOString();
       await writeSessions(sessions);
       committed = true;
-      const extractions = await documentPipeline.enqueueMany(req.user.userId, stored, files);
+      const extractions = await documentPipeline.enqueueMany(req.user.userId, stored, files, { demoScenario: session.demoScenario });
       const byId = new Map(extractions.map(item => [item.id, item]));
       res.status(201).json({ documents: session.documents.map(item => ({ ...item, ...(byId.has(item.id) ? { extraction: byId.get(item.id) } : {}) })), added: stored.length });
     } finally { if (!committed) await removeAttachments(stored, directory); }

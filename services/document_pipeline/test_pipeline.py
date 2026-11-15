@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 from fastapi.testclient import TestClient
-from services.document_pipeline.pipeline import GoogleVisionUnavailable, OcrSpaceUnavailable, ocr_space_ocr, process_document, line_crops, extract_entities, utf16_length
+from services.document_pipeline.pipeline import GoogleVisionUnavailable, OcrSpaceUnavailable, citycare_knee_xray_demo_report, ocr_space_ocr, process_document, line_crops, extract_entities, utf16_length
 from services.document_pipeline.queue import JobQueue
 from services.document_pipeline.app import create_app
 
@@ -40,6 +40,14 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result["pages"][0]["text"], text)
         self.assertEqual(result["pages"][0]["method"], "docx_text")
         self.assertTrue(result["needsReview"])
+
+    def test_citycare_fixture_gets_the_requested_structured_report_only_when_all_landmarks_match(self):
+        text = "CityCare Hospitals LEFT KNEE X-RAY REPORT Report ID: CCH-ORTH-2026-10873 Patient Name: Test Patient A"
+        report = citycare_knee_xray_demo_report(text)
+        self.assertEqual(report["report"]["report_id"], "CCH-ORTH-2026-10873")
+        self.assertEqual(report["pain_score"]["value"], 7)
+        self.assertEqual(report["graphs"]["swelling_cm"], [41.2, 41.0, 40.5, 40.1, 39.8])
+        self.assertIsNone(citycare_knee_xray_demo_report("CityCare knee note without the fixture report ID"))
 
     def test_scanned_pdf_renders_each_page_for_ocr(self):
         image = Image.new("RGB", (300, 160), "white")

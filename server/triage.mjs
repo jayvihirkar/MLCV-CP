@@ -45,9 +45,10 @@ const KEYWORDS = {
   headache: { strong: ['headache', 'head ache', 'migraine', 'head pain'], weak: ['dizzy', 'dizziness', 'vision', 'light sensitivity', 'nausea'] },
   fever: { strong: ['fever', 'temperature', 'feverish', 'pyrexia'], weak: ['chills', 'shivering', 'sweating', 'hot', 'cold'] },
   'abdominal-pain': { strong: ['stomach', 'abdominal', 'abdomen', 'belly', 'tummy', 'stomach pain'], weak: ['nausea', 'vomit', 'vomiting', 'diarrhea', 'diarrhoea', 'constipation'] },
+  'knee-pain': { strong: ['knee pain', 'knee', 'kneecap'], weak: ['swelling', 'joint pain', 'x-ray', 'xray'] },
 };
 
-const ACUITY_ORDER = ['chest-pain', 'breathing', 'headache', 'fever', 'abdominal-pain', 'cough', 'default'];
+const ACUITY_ORDER = ['chest-pain', 'breathing', 'headache', 'fever', 'abdominal-pain', 'knee-pain', 'cough', 'default'];
 
 export function classifyComplaint(rawText) {
   const text = String(rawText || '').toLowerCase();
@@ -163,6 +164,17 @@ const FLOWS = {
     { id: 'ap-anything-else', field: 'anythingElse', summaryLabel: 'Anything else', kind: 'text', phase: 'general', text: 'Is there anything else you would like your care team to know?' },
   ],
 
+  'knee-pain': [
+    bool('knee-safety', 'kneeSafety', 'Are you unable to bear weight, is the knee visibly deformed, or do you have a fever with a red, hot knee?', 'Urgent knee warning signs', { id: 'knee-urgent-warning', label: 'Unable to bear weight, deformity, or possible infected joint reported' }),
+    { id: 'knee-severity', field: 'severity', summaryLabel: 'Pain score', kind: 'number', phase: 'core', text: 'On a scale of zero to ten, what is your left knee pain right now?' },
+    { id: 'knee-associated', field: 'associatedSymptoms', summaryLabel: 'Associated symptoms', kind: 'text', phase: 'core', text: 'Have you noticed swelling, locking, clicking, or the knee giving way?' },
+    { id: 'knee-injury', field: 'injury', summaryLabel: 'Injury or trigger', kind: 'text', phase: 'core', text: 'Did this begin after an injury, fall, twist, or a change in activity?' },
+    { id: 'knee-history', field: 'history', summaryLabel: 'Relevant history', kind: 'text', phase: 'history', text: 'Do you have any medical conditions your care team should know about?' },
+    { id: 'knee-medications', field: 'medications', summaryLabel: 'Medications', kind: 'text', phase: 'history', text: 'Which medicines are you currently taking, including pain medicines?' },
+    { id: 'knee-allergies', field: 'allergies', summaryLabel: 'Allergies', kind: 'text', phase: 'history', text: 'Do you have any medicine allergies? If none, you can say “no known drug allergies”.' },
+    { id: 'knee-anything-else', field: 'anythingElse', summaryLabel: 'Anything else', kind: 'text', phase: 'general', text: 'Is there anything else about your knee that you want your care team to know?' },
+  ],
+
   default: [
     { id: 'df-context', field: 'clarifiedConcern', summaryLabel: 'More about your concern', kind: 'text', phase: 'core', text: 'Can you tell me a little more about what is bothering you? If you have pain or discomfort, where do you feel it?', requires: state => /^(pain|discomfort|unwell|sick|not feeling well|feeling unwell)[.!\s]*$/i.test(state.chiefComplaint || '') },
     { id: 'df-duration', field: 'duration', summaryLabel: 'Duration', kind: 'text', phase: 'core', text: 'When did this problem start?' },
@@ -183,6 +195,7 @@ export const COMPLAINT_LABELS = {
   headache: 'Headache',
   fever: 'Fever',
   'abdominal-pain': 'Abdominal pain',
+  'knee-pain': 'Knee pain',
   default: 'General concern',
 };
 

@@ -48,6 +48,17 @@ test('Gemini failures return explicit fallback signal rather than a fabricated g
   assert.equal(await analyseTurn({ state, question: questionById('chief-complaint'), answerText: 'Dry cough', candidates: [], redFlags: [] }), null);
 });
 
+test('knee complaints use the focused safety-first intake flow', () => {
+  const state = createTriageState();
+  applyAnswer(state, 'chief-complaint', 'I have left knee pain for two months with mild swelling.');
+  assert.equal(classifyComplaint(state.chiefComplaint), 'knee-pain');
+  assert.equal(resolveQuestion(state).question.id, 'knee-safety');
+  applyAnswer(state, 'knee-safety', 'No');
+  assert.equal(resolveQuestion(state).question.id, 'knee-severity');
+  applyAnswer(state, 'knee-severity', '7');
+  assert.equal(state.severity, 7);
+});
+
 test('OpenRouter uses the same conversation contract and blocks free-model use without explicit synthetic test mode', async t => {
   const names = ['INTAKE_LLM_PROVIDER', 'OPENROUTER_API_KEY', 'OPENROUTER_MODEL', 'OPENROUTER_SYNTHETIC_TEST_MODE'];
   const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));

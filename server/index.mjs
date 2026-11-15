@@ -26,6 +26,7 @@ const voiceId = () => process.env.ELEVENLABS_VOICE_ID || defaultVoiceId;
 const tokenTtl = 1000 * 60 * 60 * 8;
 const tokenKey = token => createHash('sha256').update(token).digest('hex');
 const googleConfigured = () => Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+const demoGooglePatientName = 'Jay Vihirkar';
 function googleRedirectUri(req) { return process.env.GOOGLE_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/auth/google/callback`; }
 
 let ready;
@@ -76,7 +77,7 @@ async function ensureUsers() {
 
 async function issueToken(user) {
   const token = `${randomUUID()}${randomUUID()}`.replace(/-/g, '');
-  await putRecord('auth-tokens', tokenKey(token), { userId: user.id, name: user.name, email: user.email, role: user.role, specialty: user.specialty || null, expiresAt: Date.now() + tokenTtl });
+  await putRecord('auth-tokens', tokenKey(token), { userId: user.id, name: user.name, email: user.email, role: user.role, provider: user.provider || 'password', specialty: user.specialty || null, expiresAt: Date.now() + tokenTtl });
   return token;
 }
 
@@ -230,9 +231,13 @@ app.get('/api/auth/google/callback', async (req, res, next) => {
     if (!email || profile.email_verified !== true || typeof profile.sub !== 'string') return res.redirect('/?auth_error=google');
     const users = await readUsers();
     let user = users.find((entry) => entry.email.toLowerCase() === email);
+    const matchesDemoPatient = String(profile.name || '').trim() === demoGooglePatientName;
     if (!user) {
-      user = { id: randomUUID(), name: profile.name || email.split('@')[0], email, role: 'Patient', provider: 'google', createdAt: new Date().toISOString() };
+      user = { id: randomUUID(), name: profile.name || email.split('@')[0], email, role: 'Patient', provider: 'google', demoScenarioAvailable: matchesDemoPatient, createdAt: new Date().toISOString() };
       users.push(user);
+      await writeUsers(users);
+    } else if (matchesDemoPatient && user.provider === 'google' && !user.demoScenarioAvailable && !user.demoScenarioUsedAt) {
+      user.demoScenarioAvailable = true;
       await writeUsers(users);
     }
     res.set('Referrer-Policy', 'no-referrer');
@@ -244,12 +249,24 @@ app.post('/api/sessions', authenticate, async (req, res, next) => {
   try {
     const sessions = await readSessions();
     const locale = req.body.locale || 'en-IN';
+    let demoScenario = null;
+    if (req.user.provider === 'google' && req.user.name === demoGooglePatientName) {
+      const users = await readUsers();
+      const user = users.find(entry => entry.id === req.user.userId);
+      if (user?.demoScenarioAvailable && !user.demoScenarioUsedAt) {
+        demoScenario = 'citycare-knee-xray';
+        user.demoScenarioAvailable = false;
+        user.demoScenarioUsedAt = new Date().toISOString();
+        await writeUsers(users);
+      }
+    }
     const session = {
       id: crypto.randomUUID(),
       userId: req.user.userId,
       patient: req.body.patient || 'Guest patient',
       locale,
       responses: [],
+      demoScenario,
       triage: createTriageState({ adaptive: String(locale).toLowerCase().startsWith('en') }),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -581,7 +598,7 @@ function triageRecord(session) {
   }));
   const evFor = (questionId) => { const index = answers.findIndex((item) => item.questionId === questionId); return index === -1 ? [] : [`ev-${String(session.id).slice(0, 8)}-${index + 1}`]; };
   const answerFor = (questionId) => (answers.find((item) => item.questionId === questionId)?.answer || '').trim();
-  const severityMatch = String(answerFor('ha-severity') || answerFor('ap-severity') || answerFor('df-severity') || '').match(/\b(\d{1,2})\b/);
+  const severityMatch = String(answerFor('ha-severity') || answerFor('ap-severity') || answerFor('knee-severity') || answerFor('df-severity') || '').match(/\b(\d{1,2})\b/);
   const severity = typeof triage.severity === 'number' ? triage.severity : (severityMatch ? Number(severityMatch[1]) : null);
   const escalated = Boolean(triage.escalated);
   const associated = Array.isArray(triage.associatedSymptoms) ? triage.associatedSymptoms.join(', ') : '';
@@ -601,9 +618,12 @@ function triageRecord(session) {
   const generatedHistory = generated.filter(item => questionById(item.questionId, triage)?.section === 'history');
   if (triage.duration) hpiParts.push(`Duration: ${triage.duration}.`);
   if (associated) hpiParts.push(`Associated symptoms reported: ${associated}.`);
-  const meds = answerFor('cp-medications') || answerFor('br-medications') || answerFor('ha-medications') || answerFor('fv-medications') || answerFor('ap-medications') || answerFor('df-medications');
-  const allergies = answerFor('cp-allergies') || answerFor('br-allergies') || answerFor('ha-allergies') || answerFor('fv-allergies') || answerFor('ap-allergies') || answerFor('df-allergies');
-  const other = answerFor('cp-anything-else') || answerFor('br-anything-else') || answerFor('ha-anything-else') || answerFor('fv-anything-else') || answerFor('ap-anything-else') || answerFor('df-anything-else');
+  const kneeSymptoms = answerFor('knee-associated');
+  if (kneeSymptoms) hpiParts.push(`Associated symptoms reported: ${kneeSymptoms}.`);
+  const history = answerFor('knee-history') || answerFor('cough-history') || answerFor('df-history');
+  const meds = answerFor('cp-medications') || answerFor('br-medications') || answerFor('ha-medications') || answerFor('fv-medications') || answerFor('ap-medications') || answerFor('knee-medications') || answerFor('df-medications');
+  const allergies = answerFor('cp-allergies') || answerFor('br-allergies') || answerFor('ha-allergies') || answerFor('fv-allergies') || answerFor('ap-allergies') || answerFor('knee-allergies') || answerFor('df-allergies');
+  const other = answerFor('cp-anything-else') || answerFor('br-anything-else') || answerFor('ha-anything-else') || answerFor('fv-anything-else') || answerFor('ap-anything-else') || answerFor('knee-anything-else') || answerFor('df-anything-else');
   return {
     id: `INTAKE-${String(session.id).slice(0, 8)}`,
     demo: false,
@@ -620,7 +640,7 @@ function triageRecord(session) {
     status: escalated ? 'flagged' : (triage.complete ? 'awaiting_review' : 'incomplete'),
     appointment: session.createdAt,
     submittedAt: session.updatedAt,
-    overview: { chiefComplaint: triage.chiefComplaint || null, allergies: allergies ? [{ name: allergies, reaction: 'As reported' }] : [], medications: meds ? [{ name: meds, dose: '', frequency: 'As reported' }] : [], conditions: [], notes: triage.complaintLabel ? `Intake category: ${triage.complaintLabel}` : null },
+    overview: { chiefComplaint: triage.chiefComplaint || null, allergies: allergies ? [{ name: allergies, reaction: 'As reported' }] : [], medications: meds ? [{ name: meds, dose: '', frequency: 'As reported' }] : [], conditions: history ? [{ name: history, since: 'As reported' }] : [], notes: triage.complaintLabel ? `Intake category: ${triage.complaintLabel}` : null },
     summary: {
       generatedAt: session.updatedAt,
       model: 'MediTrace adaptive intake (structured from patient responses)',
@@ -628,7 +648,7 @@ function triageRecord(session) {
         { id: 'chief-complaint', title: 'Chief complaint', body: triage.chiefComplaint || 'Not provided', sources: evFor('chief-complaint') },
         { id: 'hpi', title: 'History of present illness', body: hpiParts.join(' ') || 'Not provided', sources: [...evFor('chief-complaint'), ...generated.filter(item => questionById(item.questionId, triage)?.section !== 'history').flatMap(item => evFor(item.questionId))] },
         { id: 'red-flags', title: 'Reported warning signs', body: escalated ? (triage.redFlags || []).map((flag) => flag.label).join('; ') : 'None reported.', sources: [] },
-        { id: 'medications-allergies', title: 'History, medications & allergies', body: generatedHistory.length ? generatedHistory.map(item => `${item.label}: ${item.answer}`).join('\n') : `Medications: ${meds || 'Not provided'}. Allergies: ${allergies || 'Not provided'}.`, sources: generatedHistory.flatMap(item => evFor(item.questionId)) },
+        { id: 'medications-allergies', title: 'History, medications & allergies', body: generatedHistory.length ? generatedHistory.map(item => `${item.label}: ${item.answer}`).join('\n') : `History: ${history || 'Not provided'}. Medications: ${meds || 'Not provided'}. Allergies: ${allergies || 'Not provided'}.`, sources: generatedHistory.flatMap(item => evFor(item.questionId)) },
         { id: 'other', title: 'Other details', body: other || 'Not provided', sources: [] },
       ],
     },

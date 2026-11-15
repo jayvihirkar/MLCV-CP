@@ -10,6 +10,22 @@ const error = (message, status = 400) => Object.assign(new Error(message), { sta
 export const documentPipelineConfigured = () => Boolean(process.env.DOCUMENT_PIPELINE_URL && process.env.DOCUMENT_PIPELINE_TOKEN);
 export const extractionSummary = record => ({ status: record?.status || (documentPipelineConfigured() ? 'not_started' : 'not_configured'), updatedAt: record?.updatedAt || null, pageCount: record?.result?.pages.length || 0, entityCount: record?.result?.pages.reduce((sum, page) => sum + page.entities.length, 0) || 0, review: record?.review || null, error: record?.error || null });
 
+function validDemoReport(report) {
+  if (!report || typeof report !== 'object') return null;
+  const text = value => typeof value === 'string' && value.length > 0 && value.length <= 300;
+  const texts = value => Array.isArray(value) && value.length <= 12 && value.every(text);
+  const values = value => Array.isArray(value) && value.length <= 12 && value.every(Number.isFinite);
+  if (!text(report.document_type) || !text(report.hospital) || !text(report.report?.title) || !text(report.report?.report_id) || !text(report.report?.date) || !text(report.patient?.name) || !text(report.patient?.patient_id) || !Number.isInteger(report.patient?.age) || report.patient.age < 0 || report.patient.age > 130 || !text(report.patient?.sex) || !text(report.clinical_information?.chief_complaint) || !texts(report.clinical_information?.symptoms) || !texts(report.clinical_information?.medical_history) || !text(report.clinical_information?.allergies) || !Array.isArray(report.medications) || report.medications.length > 20 || !report.medications.every(item => text(item?.name) && text(item?.dosage) && text(item?.frequency)) || !Number.isInteger(report.pain_score?.value) || !Number.isInteger(report.pain_score?.scale) || !text(report.pain_score?.severity) || !texts(report.imaging) || !texts(report.findings) || !texts(report.impression) || !values(report.graphs?.pain_trend) || !values(report.graphs?.swelling_cm) || !texts(report.recommendations) || !text(report.doctor?.name) || !text(report.doctor?.qualification) || !text(report.doctor?.registration)) return null;
+  return structuredClone(report);
+}
+
+function publicResult(record) {
+  if (!record?.result) return null;
+  if (record.demoScenario === 'citycare-knee-xray') return record.result;
+  const { structuredReport, ...result } = record.result;
+  return result;
+}
+
 async function provider(path, options = {}) {
   if (!documentPipelineConfigured()) throw error('Document extraction is not configured. Add the pipeline URL and token on the server.', 503);
   let response;
@@ -37,7 +53,8 @@ export function validateExtraction(result) {
     });
     return { number: page.number, method: page.method, text: page.text, entities };
   });
-  return { pages, warnings: (Array.isArray(result.warnings) ? result.warnings : []).filter(item => typeof item === 'string').slice(0, 20).map(item => item.slice(0, 500)), models: { ocr: String(result.models?.ocr || 'TrOCR').slice(0, 200), nlp: String(result.models?.nlp || 'Medical NER').slice(0, 200) }, needsReview: true };
+  const structuredReport = validDemoReport(result.structuredReport);
+  return { pages, warnings: (Array.isArray(result.warnings) ? result.warnings : []).filter(item => typeof item === 'string').slice(0, 20).map(item => item.slice(0, 500)), models: { ocr: String(result.models?.ocr || 'TrOCR').slice(0, 200), nlp: String(result.models?.nlp || 'Medical NER').slice(0, 200) }, needsReview: true, ...(structuredReport ? { structuredReport } : {}) };
 }
 
 let pending = Promise.resolve();
@@ -111,8 +128,8 @@ export function registerDocumentRoutes(app, { authenticate, profileFile, readSes
       return { ...current, status: job.status, progress: typeof job.progress === 'string' ? job.progress.slice(0, 240) : null, queuePosition: Number.isInteger(job.queuePosition) ? job.queuePosition : null, ...(result ? { result } : {}), error: job.status === 'failed' ? workerError || 'Extraction failed. The original is saved. Retry processing or review the document manually.' : null, updatedAt: new Date().toISOString() };
     });
   }
-  const reply = (res, record) => res.json({ ...extractionSummary(record), progress: record?.progress || null, queuePosition: record?.queuePosition || null, startedAt: record?.startedAt || null, configured: documentPipelineConfigured(), result: record?.result || null });
-  async function start(userId, item, bytes, verify = async () => {}) {
+  const reply = (res, record) => res.json({ ...extractionSummary(record), progress: record?.progress || null, queuePosition: record?.queuePosition || null, startedAt: record?.startedAt || null, configured: documentPipelineConfigured(), result: publicResult(record) });
+  async function start(userId, item, bytes, verify = async () => {}, context = {}) {
     const existing = await read(item.id);
     if (existing && existing.status !== 'failed') return sync(item.id, existing);
     if (!documentPipelineConfigured()) throw error('Document extraction is not configured. The original file is saved.', 503);
@@ -125,19 +142,19 @@ export function registerDocumentRoutes(app, { authenticate, profileFile, readSes
       const job = await provider('/jobs', { method: 'POST', body, headers: { 'Idempotency-Key': key } });
       await verify();
       const result = job.status === 'completed' ? validateExtraction(job.result) : undefined;
-      return await changeExtraction(extractionFile, item.id, current => current && current.status !== 'failed' ? undefined : ({ userId, jobId: job.id, status: job.status, startedAt: new Date().toISOString(), sourceSha256: digest, result, review: null, error: job.status === 'failed' ? (typeof job.error === 'string' ? job.error.slice(0, 500) : 'Extraction failed. Try processing again.') : null, updatedAt: new Date().toISOString() }));
+      return await changeExtraction(extractionFile, item.id, current => current && current.status !== 'failed' ? undefined : ({ userId, jobId: job.id, status: job.status, startedAt: new Date().toISOString(), sourceSha256: digest, result, demoScenario: context.demoScenario === 'citycare-knee-xray' ? context.demoScenario : null, review: null, error: job.status === 'failed' ? (typeof job.error === 'string' ? job.error.slice(0, 500) : 'Extraction failed. Try processing again.') : null, updatedAt: new Date().toISOString() }));
     } catch (failure) {
       if (failure.status !== 404) await changeExtraction(extractionFile, item.id, current => current && current.status !== 'failed' ? undefined : ({ userId, status: 'failed', error: failure.message || 'Extraction could not start. Your document is saved; retry processing.', updatedAt: new Date().toISOString() }));
       throw failure;
     }
   }
-  async function enqueueMany(userId, items, files = []) {
+  async function enqueueMany(userId, items, files = [], context = {}) {
     if (!documentPipelineConfigured()) return [];
     // Await fast job submission, never model inference or a detached Vercel task.
     // Reuse validated buffers to avoid downloading the just-uploaded files again.
     return Promise.all(items.map(async (item, index) => {
       try {
-        const record = await start(userId, item, files[index]?.buffer, () => owned({ params: { id: item.id }, user: { role: 'Patient', userId } }));
+        const record = await start(userId, item, files[index]?.buffer, () => owned({ params: { id: item.id }, user: { role: 'Patient', userId } }), context);
         return { id: item.id, ...extractionSummary(record) };
       } catch {
         return { id: item.id, ...extractionSummary(await read(item.id)) };
