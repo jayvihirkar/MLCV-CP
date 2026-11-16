@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "concurrently --kill-others --names web,api,ocr \"vite\" \"node server/index.mjs\" \"node scripts/dev-document-worker.mjs\"",
+    "dev:lan": "concurrently --kill-others --names web,api,ocr \"vite --host 0.0.0.0 --port 5173 --strictPort\" \"node server/index.mjs\" \"node scripts/dev-document-worker.mjs\"",
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server/index.mjs",
