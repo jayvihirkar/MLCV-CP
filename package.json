@@ -8,9 +8,10 @@
     "preview": "vite preview",
     "start": "node server/index.mjs",
     "test": "node --test tests/*.test.mjs",
+    "deploy:check": "node --env-file-if-exists=.env scripts/check-deployment.mjs",
     "db:migrate": "node scripts/migrate-to-supabase.mjs"
   },
-  "engines": { "node": ">=22" },
+  "engines": { "node": "22.x" },
   "devDependencies": {
     "vite": "latest",
     "concurrently": "latest"

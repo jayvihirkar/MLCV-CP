@@ -8,7 +8,7 @@ const MAX_TEXT = 30000;
 const processing = new Set(['queued', 'running']);
 const error = (message, status = 400) => Object.assign(new Error(message), { status });
 export const documentPipelineConfigured = () => Boolean(process.env.DOCUMENT_PIPELINE_URL && process.env.DOCUMENT_PIPELINE_TOKEN);
-export const extractionSummary = record => ({ status: record?.status || (documentPipelineConfigured() ? 'not_started' : 'not_configured'), updatedAt: record?.updatedAt || null, pageCount: record?.result?.pages.length || 0, entityCount: record?.result?.pages.reduce((sum, page) => sum + page.entities.length, 0) || 0, review: record?.review || null, error: record?.error || null });
+export const extractionSummary = record => ({ status: record?.status || (documentPipelineConfigured() ? 'not_started' : 'not_configured'), updatedAt: record?.updatedAt || null, sourceSha256: record?.sourceSha256 || null, pageCount: record?.result?.pages.length || 0, entityCount: record?.result?.pages.reduce((sum, page) => sum + page.entities.length, 0) || 0, review: record?.review || null, error: record?.error || null });
 
 function validDemoReport(report) {
   if (!report || typeof report !== 'object') return null;

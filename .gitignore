@@ -1,6 +1,9 @@
 node_modules/
 dist/
 .env
+.env.*
+!.env.example
+.vercel/
 data/intakes.json
 data/users.json
 data/reviews.json

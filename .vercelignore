@@ -7,3 +7,8 @@ services/
 .venv-document/
 worker-data/
 .git/
+output/
+Left Knee Medical Report.png
+*.md
+supabase/
+scripts/

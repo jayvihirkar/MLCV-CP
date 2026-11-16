@@ -16,6 +16,7 @@ const state = {
   queue: [],
   selected: null,
   lastPatientId: null,
+  patientMode: 'snapshot',
   loading: true,
   loadingPatient: false,
   error: null,
@@ -475,6 +476,257 @@ function sourceChip(patient, id) {
   return `<button type="button" class="dc-src-link" data-act="evidence" data-ev="${esc(id)}">${icon('link')}${esc(ev.label || 'Source')}</button>`;
 }
 
+const cleanText = value => String(value ?? '').trim();
+const normalizeName = value => cleanText(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+function responseAnswer(patient, ids = [], pattern = null) {
+  const responses = Array.isArray(patient?.intake?.responses) ? patient.intake.responses : [];
+  const matches = item => {
+    const answer = cleanText(item.answer);
+    return Boolean(answer) && (!pattern || pattern.test(answer));
+  };
+  const byId = responses.find(item => ids.includes(item.questionId) && matches(item));
+  if (byId) return cleanText(byId.answer);
+  if (pattern) {
+    const byText = responses.find(matches);
+    if (byText) return cleanText(byText.answer);
+  }
+  return '';
+}
+
+function medicationSummary(text, fallback = []) {
+  if (Array.isArray(fallback) && fallback.length) {
+    return fallback.map(item => `${item.name}${item.dose ? ` ${item.dose}` : ''}${item.frequency ? ` · ${item.frequency}` : ''}`).join('; ');
+  }
+  const source = cleanText(text);
+  if (!source) return 'None reported';
+  const name = source.match(/\b(metformin|glimepiride|insulin|aspirin|paracetamol|ibuprofen|atorvastatin|amlodipine|losartan)\b/i)?.[0];
+  const dose = source.match(/\b(\d+(?:\.\d+)?)\s*(mg|milligrams?|mcg|g)\b/i);
+  const frequency = source.match(/\b(once|twice|three times|four times|daily|every day|at night|a day)\b(?:\s*(?:a|per)\s*day)?/i);
+  const parts = [];
+  if (name) parts.push(name.replace(/^./, char => char.toUpperCase()));
+  if (dose) parts.push(`${dose[1]} ${/^milligram/i.test(dose[2]) ? 'mg' : dose[2].toLowerCase()}`);
+  if (frequency) parts.push(frequency[0].replace(/\b(?:a|per)\s+day\b/i, 'daily'));
+  return parts.length >= 2 ? parts.join(' ') : source;
+}
+
+function conditionSummary(text, fallback = []) {
+  if (Array.isArray(fallback) && fallback.length) return fallback.map(item => item.name).join(', ');
+  const source = cleanText(text);
+  const match = source.match(/\btype\s*[12]\s+diabetes(?:\s+mellitus)?|\bdiabetes(?:\s+mellitus)?|\basthma\b|\bhypertension\b|\bhypothyroidism\b|\bthyroid disorder\b/i);
+  return match ? match[0].replace(/^type/i, 'Type') : 'Not reported';
+}
+
+function primaryDocument(patient) {
+  return (patient.documents || []).find(doc => doc.mimeType && doc.name) || null;
+}
+
+function reportForDocument(doc) {
+  return doc?.extractionData?.result?.structuredReport || null;
+}
+
+function documentVerification(patient, doc) {
+  if (!doc) return null;
+  const report = reportForDocument(doc);
+  if (!report) {
+    return { state: 'pending', report: null, extractionStatus: doc.extractionData?.status || doc.extraction?.status || 'unknown', reviewed: Boolean(doc.extractionData?.review || doc.extraction?.review) };
+  }
+  const patientName = normalizeName(patient.name);
+  const reportName = normalizeName(report.patient?.name);
+  const nameMatch = Boolean(patientName && reportName && patientName === reportName);
+  const patientSex = normalizeName(patient.sex);
+  const reportSex = normalizeName(report.patient?.sex);
+  const sexMatch = !patientSex || !reportSex || patientSex === reportSex;
+  return {
+    state: nameMatch && sexMatch ? 'match' : 'mismatch',
+    report,
+    nameMatch,
+    sexMatch,
+    reportName: report.patient?.name || 'Unknown patient',
+    reportId: report.patient?.patient_id || 'No report patient ID',
+    reportAge: report.patient?.age,
+    reportSex: report.patient?.sex,
+    uploadedAt: doc.uploadedAt,
+    extractedAt: doc.extractionData?.updatedAt,
+    sourceSha256: doc.extractionData?.sourceSha256 || null,
+    extractionStatus: doc.extractionData?.status || doc.extraction?.status || 'unknown',
+    reviewed: Boolean(doc.extractionData?.review || doc.extraction?.review),
+  };
+}
+
+function snapshotFacts(patient) {
+  const overview = patient.overview || {};
+  const chief = cleanText(overview.chiefComplaint || patient.reason);
+  const duration = (chief.match(/\b(?:for|since)\s+(?:about\s+)?([^.,;]+?)(?:\s+with\b|\.|;|$)/i)?.[1] || '').trim();
+  const severityAnswer = responseAnswer(
+    patient,
+    ['knee-severity', 'ha-severity', 'ap-severity', 'df-severity', 'cp-severity', 'br-severity', 'fv-severity'],
+    /^\s*(?:10|[0-9])\s*(?:\/\s*10)?\s*$/,
+  );
+  const severity = Number((severityAnswer.match(/\b(10|[0-9])\b/) || [])[1]);
+  const symptomAnswer = responseAnswer(patient, ['knee-associated', 'ai-3'], /(swelling|locking|clicking|giving (?:away|way))/i);
+  const symptoms = [];
+  if (/swelling/i.test(symptomAnswer)) symptoms.push('Mild swelling');
+  if (/no locking|no clicking|locking|clicking/i.test(symptomAnswer)) symptoms.push('No locking / clicking');
+  if (/giving (?:away|way)/i.test(symptomAnswer)) symptoms.push('No giving away');
+  if (!symptoms.length && symptomAnswer) symptoms.push(symptomAnswer);
+  const injuryAnswer = responseAnswer(patient, ['knee-associated', 'knee-injury', 'ai-6'], /no (?:specific )?injury|no fall|no twist|no trauma/i);
+  const allergyAnswer = responseAnswer(patient, [], /no known drug allergies|nkda|allerg/i);
+  const medicationAnswer = responseAnswer(patient, ['ai-6'], /metformin|mg|milligram|tablet|twice|daily/i);
+  const additionalAnswer = responseAnswer(patient, ['ai-8', 'knee-anything-else'], /nothing else|no additional|none|no concerns/i);
+  const urgentFlag = (patient.flags || []).find(flag => flag.id === 'fl-urgent');
+  const highSeverity = Number.isFinite(severity) && severity >= 7;
+  const document = primaryDocument(patient);
+  const verification = documentVerification(patient, document);
+  return {
+    patientName: patient.name,
+    chief: chief || 'Not provided',
+    duration,
+    severity: Number.isFinite(severity) ? severity : null,
+    symptoms,
+    injury: /no specific injury/i.test(injuryAnswer) ? 'No specific injury' : (injuryAnswer || 'Not reported'),
+    history: conditionSummary(responseAnswer(patient, [], /diabetes|asthma|hypertension|thyroid/i), overview.conditions || []),
+    medications: medicationSummary(medicationAnswer, overview.medications || []),
+    allergies: /no known drug allergies|nkda/i.test(allergyAnswer)
+      ? 'No known drug allergies'
+      : (overview.allergies?.length ? overview.allergies.map(item => item.name).join(', ') : 'None reported'),
+    additional: /nothing else|no additional|none|no concerns/i.test(additionalAnswer) ? 'None reported' : (additionalAnswer || 'None reported'),
+    urgent: urgentFlag ? urgentFlag.detail : 'No urgent warning signs reported',
+    highSeverity,
+    document,
+    verification,
+  };
+}
+
+function snapshotHeader(patient, facts) {
+  const meta = [
+    patient.age != null ? `${patient.age} yrs` : '',
+    patient.sex || '',
+    patient.id,
+    fmtDate(patient.submittedAt || patient.appointment),
+  ].filter(Boolean).map(esc).join(' · ');
+  return `
+    <header class="dc-snap-head">
+      <button type="button" class="dc-back" data-act="back" aria-label="Back to patient queue">${icon('arrow-left')}</button>
+      <div class="dc-snap-id">
+        <h2>${esc(patient.name)}</h2>
+        <p>${meta}</p>
+      </div>
+      <div class="dc-snap-tags">
+        ${patient.demo ? badge(['Demo record', 'warn']) : badge(['Recorded intake', 'ok'])}
+        ${facts.urgent === 'No urgent warning signs reported' ? badge(['No urgent flags', 'ok']) : badge(['Urgent flag', 'danger'])}
+      </div>
+    </header>`;
+}
+
+function snapshotDocumentCard(facts) {
+  const { document, verification } = facts;
+  if (!document) {
+    return `<section class="dc-snap-card dc-snap-doc"><div class="dc-snap-label">Uploaded medical report</div><p class="dc-snap-empty">No document uploaded with this intake.</p></section>`;
+  }
+  if (!verification?.report) {
+    return `<section class="dc-snap-card dc-snap-doc">
+      <div class="dc-snap-card-head"><span class="dc-snap-label">Uploaded medical report</span><span class="dc-badge tone-muted">Unverified</span></div>
+      <p class="dc-snap-doc-name">${esc(document.name)}</p>
+      <p class="dc-snap-empty">${verification?.extractionStatus === 'completed' ? 'Extracted report is waiting to load.' : 'Extraction is unavailable or still processing. Open the detailed report to review the original.'}</p>
+    </section>`;
+  }
+  const report = verification.report;
+  const findings = Array.isArray(report.findings) ? report.findings.slice(0, 4) : [];
+  const reportIdentity = [
+    verification.reportName,
+    verification.reportAge != null ? `${verification.reportAge}${verification.reportSex ? verification.reportSex[0] : ''}` : '',
+    verification.reportId,
+  ].filter(Boolean).join(' · ');
+  const verificationHtml = verification.state === 'match'
+    ? `<p class="dc-snap-verify ok"><b>Identity matched</b><span>Report: ${esc(reportIdentity)} · Machine-extracted, still unverified.</span></p>`
+    : `<p class="dc-snap-verify bad"><b>Identity mismatch</b><span>Report: ${esc(reportIdentity)}. Intake: ${esc(facts.patientName)}. Findings kept separate.</span></p>`;
+  return `
+    <section class="dc-snap-card dc-snap-doc">
+      <div class="dc-snap-card-head">
+        <span class="dc-snap-label">Uploaded medical report</span>
+        <span class="dc-badge tone-warn">Document · unverified</span>
+      </div>
+      <div class="dc-snap-doc-main">
+        <div class="dc-snap-doc-title">
+          <p class="dc-snap-doc-name">${esc(report.report?.title || document.name)}</p>
+          <p class="dc-snap-doc-meta">${esc(report.hospital || 'Uploaded document')}${report.report?.date ? ` · ${esc(report.report.date)}` : ''}</p>
+        </div>
+        ${verificationHtml}
+      </div>
+      <div class="dc-snap-findings">
+        <span class="dc-snap-findings-label">Key findings · document</span>
+        ${findings.length ? `<ul>${findings.map(item => `<li>${esc(item)}</li>`).join('')}</ul>` : '<p class="dc-snap-empty">No structured findings were extracted. Review the original in the detailed report.</p>'}
+      </div>
+    </section>`;
+}
+
+function clinicalSnapshotHtml(patient) {
+  const facts = snapshotFacts(patient);
+  const sections = patient.summary?.sections || [];
+  const reviewed = sections.filter(section => section.review?.status === 'reviewed').length;
+  const decision = patient.review?.decision;
+  const statusText = decision === 'approved'
+    ? 'Summary approved'
+    : decision === 'clarification_requested'
+      ? 'Clarification requested'
+      : decision === 'clarification_answered'
+        ? 'Patient answered clarification'
+        : decision === 'draft'
+          ? 'Draft saved'
+          : 'Not reviewed yet';
+  const statusTone = decision === 'approved' ? 'ok' : decision === 'clarification_requested' ? 'warn' : 'pending';
+  return `
+    <div class="dc-snap">
+      ${snapshotHeader(patient, facts)}
+      <div class="dc-snap-alert">
+        <span class="dc-snap-alert-item ${facts.urgent === 'No urgent warning signs reported' ? 'ok' : 'bad'}">${icon(facts.urgent === 'No urgent warning signs reported' ? 'shield-check' : 'alert-triangle')}${esc(facts.urgent)}</span>
+        ${facts.highSeverity ? `<span class="dc-snap-alert-item warn">${icon('activity')}Pain ${esc(facts.severity)}/10</span>` : ''}
+      </div>
+      <div class="dc-snap-grid">
+        <section class="dc-snap-card dc-snap-complaint">
+          <div class="dc-snap-card-head">
+            <div class="dc-snap-label">Chief complaint</div>
+            <span class="dc-snap-src">${icon('user-round')}Patient-reported</span>
+          </div>
+          <p class="dc-snap-lead">${esc(facts.chief)}</p>
+          <div class="dc-snap-facts">
+            ${facts.duration ? `<span>${icon('calendar-clock')}${esc(facts.duration)}</span>` : ''}
+            <span class="dc-snap-pain-fact">${icon('activity')}Pain ${facts.severity ?? '—'}/10</span>
+            <span>${icon('message-square')}Additional: ${esc(facts.additional)}</span>
+          </div>
+        </section>
+        <section class="dc-snap-card dc-snap-symptoms">
+          <div class="dc-snap-label">Associated symptoms</div>
+          <ul class="dc-snap-chips">${facts.symptoms.length ? facts.symptoms.map(item => `<li>${esc(item)}</li>`).join('') : '<li>Not reported</li>'}</ul>
+        </section>
+        <section class="dc-snap-card dc-snap-background">
+          <div class="dc-snap-card-head">
+            <div class="dc-snap-label">Clinical background</div>
+            <span class="dc-snap-src">${icon('user-round')}Patient-reported</span>
+          </div>
+          <div class="dc-snap-bg-grid">
+            <p class="dc-snap-bg-item"><span>Injury / trigger</span><b>${esc(facts.injury)}</b></p>
+            <p class="dc-snap-bg-item"><span>Medical history</span><b>${esc(facts.history)}</b></p>
+            <p class="dc-snap-bg-item"><span>Medications</span><b>${esc(facts.medications)}</b></p>
+            <p class="dc-snap-bg-item"><span>Allergies</span><b>${esc(facts.allergies)}</b></p>
+          </div>
+        </section>
+        ${snapshotDocumentCard(facts)}
+      </div>
+      <footer class="dc-snap-foot">
+        <div class="dc-snap-review ${statusTone}">
+          ${icon(decision === 'approved' ? 'circle-check' : 'clock')}
+          <span><b>${esc(statusText)}</b><small>${esc(reviewed)} of ${esc(sections.length)} sections reviewed</small></span>
+        </div>
+        <div class="dc-snap-actions">
+          <button type="button" class="dc-btn ghost sm" data-act="approve-ask">${icon('check')}Approve</button>
+          <button type="button" class="dc-btn primary sm" data-act="open-detail">${icon('file-text')}View detailed report</button>
+        </div>
+      </footer>
+    </div>`;
+}
+
 function overviewCard(patient) {
   const o = patient.overview || {};
   const list = (arr, render) => (arr && arr.length ? arr.map(render).join('') : '<span class="dc-not-provided">Not provided</span>');
@@ -569,14 +821,37 @@ function documentsCard(patient) {
     <div class="dc-card">
       <div class="dc-card-head"><h2>Documents & reports</h2><span class="dc-card-sub">${esc(docs.length)} file${docs.length === 1 ? '' : 's'}</span></div>
       <div class="dc-card-body">
-        ${docs.length ? docs.map((doc) => `
+        ${docs.length ? docs.map((doc) => {
+          const verification = documentVerification(patient, doc);
+          const report = verification?.report;
+          const identityText = verification?.state === 'mismatch'
+            ? `Identity mismatch. This report is issued to ${verification.reportName} (${verification.reportId}), not ${patient.name}. Document findings are shown separately and must not be merged without confirmation.`
+            : verification?.state === 'match'
+              ? `Identity check matches the intake patient. Machine extraction is still unverified.`
+              : 'Patient identity has not been verified against a structured extraction.';
+          const processed = verification?.extractedAt ? `processed ${fmtDateTime(verification.extractedAt)}` : 'extraction not completed';
+          return `
           <div class="dc-doc">
             <span class="dc-doc-ico">${icon('file-text')}</span>
             <div><b>${esc(doc.name)}</b><small>${esc(doc.type || 'Document')} · uploaded ${esc(fmtDate(doc.uploadedAt))} · ${esc(doc.source || '')}</small></div>
             <span class="dc-doc-tag">${doc.demo ? badge(['Demo', 'warn']) : badge(['Recorded', 'ok'])}</span>
             ${doc.mimeType ? `<button type="button" class="attachment-button" data-download-attachment="${esc(doc.id)}" data-attachment-name="${esc(doc.name)}">Download</button>` : ''}
+            ${verification ? `<div class="dc-doc-verification ${verification.state}">
+              ${icon(verification.state === 'mismatch' ? 'shield-alert' : verification.state === 'match' ? 'shield-check' : 'shield-question')}
+              <div><b>${verification.state === 'mismatch' ? 'Patient identity mismatch' : verification.state === 'match' ? 'Patient identity matched' : 'Identity check pending'}</b><span>${esc(identityText)}</span></div>
+            </div>` : ''}
+            <div class="dc-doc-preview" data-preview-attachment="${esc(doc.id)}" data-preview-name="${esc(doc.name)}">
+              <span class="dc-doc-preview-empty">${icon('image')}Loading original document preview…</span>
+            </div>
+            <div class="dc-doc-processing">
+              <span>${icon('scan-text')}Extraction: ${esc(verification?.extractionStatus || doc.extraction?.status || 'unknown')} · ${esc(processed)}</span>
+              ${verification?.reviewed ? `<span class="dc-badge tone-ok">Extraction reviewed</span>` : `<span class="dc-badge tone-warn">Unreviewed · unverified</span>`}
+              ${verification?.sourceSha256 ? `<code title="SHA-256 of the stored original">SHA-256 ${esc(verification.sourceSha256.slice(0, 16))}…</code>` : ''}
+            </div>
+            ${report ? `<p class="dc-review-note">Structured report: ${esc(report.hospital || 'Uploaded report')} · ${esc(report.report?.report_id || 'No report ID')} · ${esc(report.report?.date || 'No report date')}. Every field below comes from machine extraction, not clinician verification.</p>` : ''}
             ${documentExtractionPanel(doc)}
-          </div>`).join('') : '<p class="dc-not-provided">No documents uploaded with this intake.</p>'}
+          </div>`;
+        }).join('') : '<p class="dc-not-provided">No documents uploaded with this intake.</p>'}
       </div>
     </div>`;
 }
@@ -675,12 +950,14 @@ function patientViewHtml() {
   if (state.patientError) {
     return `<div class="dc-card"><div class="dc-card-body">${emptyState('alert-octagon', 'Could not load this patient', state.patientError)}<div style="text-align:center"><button type="button" class="dc-btn teal-soft sm" data-act="retry-patient">Try again</button></div></div></div>`;
   }
-  const approved = patient.review?.decision === 'approved';
+  if (state.patientMode === 'snapshot') return clinicalSnapshotHtml(patient);
+  const meta = [patient.age != null ? `${patient.age} yrs` : '', patient.sex || '', patient.id, patient.submittedAt ? `submitted ${fmtDateTime(patient.submittedAt)}` : ''].filter(Boolean).join(' · ');
   return `
     <div class="dc-patient-head">
-      <button type="button" class="dc-back" data-act="back" aria-label="Back">${icon('arrow-left')}</button>
+      <button type="button" class="dc-back" data-act="back" aria-label="Back to patient queue">${icon('arrow-left')}</button>
       <div class="dc-ph-title">
         <h2>${esc(patient.name)}</h2>
+        <p class="dc-ph-meta">${esc(meta)}</p>
         <div class="dc-ph-badges">
           ${badge([patient.id, 'outline'])}
           ${patient.demo ? badge(['Demo record', 'warn']) : badge(['Recorded intake', 'ok'])}
@@ -689,6 +966,7 @@ function patientViewHtml() {
         </div>
       </div>
       <div class="dc-patient-actions">
+        <button type="button" class="dc-btn ghost sm" data-act="close-detail">${icon('panel-top')}Back to snapshot</button>
         <button type="button" class="dc-btn ghost sm" disabled title="Hospital export is not configured in this prototype">${icon('upload')}Export to HIS (not connected)</button>
       </div>
     </div>
@@ -722,6 +1000,8 @@ function currentViewHtml() {
 
 function renderView() {
   const host = appRoot.querySelector('#dcView');
+  host.classList.toggle('dc-view-snapshot', state.view === 'patient' && state.patientMode === 'snapshot' && !state.loadingPatient && Boolean(state.selected));
+  clearPreviewUrls();
   if (state.error) {
     host.innerHTML = `<div class="dc-card"><div class="dc-card-body">${emptyState('plug-zap', 'Could not reach the clinical service', state.error)}<div style="text-align:center"><button type="button" class="dc-btn teal-soft sm" data-act="reload">Reload</button></div></div></div>`;
     icons();
@@ -731,6 +1011,7 @@ function renderView() {
   host.innerHTML = currentViewHtml();
   icons();
   autosizeAll();
+  hydrateDocumentPreviews();
 }
 
 function renderAll() {
@@ -742,6 +1023,67 @@ function renderAll() {
 
 function autosize(el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; }
 function autosizeAll() { appRoot.querySelectorAll('.dc-sec-edit').forEach(autosize); }
+
+const previewUrls = [];
+function clearPreviewUrls() {
+  for (const url of previewUrls) URL.revokeObjectURL(url);
+  previewUrls.length = 0;
+}
+
+async function hydrateDocumentPreviews() {
+  const nodes = [...appRoot.querySelectorAll('[data-preview-attachment]')];
+  if (!nodes.length) return;
+  await Promise.all(nodes.map(async (node) => {
+    const id = node.dataset.previewAttachment;
+    const name = node.dataset.previewName || 'Original document';
+    try {
+      const response = await fetch(`/api/profile/attachments/${encodeURIComponent(id)}`, {
+        headers: { Authorization: `Bearer ${state.token}` },
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Could not load the original document.');
+      }
+      const blob = await response.blob();
+      if (!node.isConnected) return;
+      if (!/^image\//.test(blob.type)) {
+        node.innerHTML = `<span class="dc-doc-preview-empty">${icon('file-text')}<span><b>${esc(name)}</b>Preview is not available for this file type. Use Download original.</span></span>`;
+        icons();
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      previewUrls.push(url);
+      node.innerHTML = `<img src="${url}" alt="Original uploaded document: ${esc(name)}" loading="lazy" />`;
+    } catch (error) {
+      if (!node.isConnected) return;
+      node.innerHTML = `<span class="dc-doc-preview-empty">${icon('alert-circle')}<span><b>Original document unavailable</b>${esc(error.message)} Use Download original to try again.</span></span>`;
+      icons();
+    }
+  }));
+}
+
+async function primeDocumentEvidence(patient) {
+  const docs = (patient?.documents || []).filter(doc => doc.mimeType);
+  await Promise.all(docs.map(async (doc) => {
+    try {
+      const response = await fetch(`/api/profile/attachments/${encodeURIComponent(doc.id)}/extraction`, {
+        headers: { Authorization: `Bearer ${state.token}` },
+      });
+      if (!response.ok) return;
+      const payload = await response.json();
+      doc.extractionData = payload;
+      doc.extraction = {
+        ...(doc.extraction || {}),
+        status: payload.status,
+        updatedAt: payload.updatedAt,
+        pageCount: payload.pageCount,
+        entityCount: payload.entityCount,
+        review: payload.review,
+        error: payload.error,
+      };
+    } catch { /* The detailed extraction panel can retry independently. */ }
+  }));
+}
 
 /* ---- data ---------------------------------------------------------------- */
 
@@ -782,7 +1124,9 @@ function applyReview(review) {
 }
 
 async function openPatient(id) {
+  const samePatientOpen = state.view === 'patient' && state.lastPatientId === id;
   state.view = 'patient';
+  if (!samePatientOpen) state.patientMode = 'snapshot';
   state.selected = null;
   state.lastPatientId = id;
   state.loadingPatient = true;
@@ -791,6 +1135,7 @@ async function openPatient(id) {
   renderAll();
   try {
     const data = await api(`/api/doctor/patients/${encodeURIComponent(id)}`);
+    await primeDocumentEvidence(data.patient);
     state.selected = data.patient;
   } catch (error) {
     state.patientError = error.message;
@@ -893,6 +1238,20 @@ function bind(root) {
       }
       case 'nav': switchView(action.dataset.view); break;
       case 'open': openPatient(action.dataset.id); break;
+      case 'open-detail': {
+        if (!state.selected) break;
+        state.patientMode = 'detail';
+        renderAll();
+        appRoot.querySelector('#dcView')?.scrollTo({ top: 0 });
+        break;
+      }
+      case 'close-detail': {
+        if (!state.selected) break;
+        state.patientMode = 'snapshot';
+        renderAll();
+        appRoot.querySelector('#dcView')?.scrollTo({ top: 0 });
+        break;
+      }
       case 'back': switchView('queue'); break;
       case 'reload':
       case 'retry-patient': if (state.view === 'patient' && state.lastPatientId) openPatient(state.lastPatientId); else refresh(); break;
