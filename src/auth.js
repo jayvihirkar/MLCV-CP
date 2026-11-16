@@ -202,16 +202,37 @@ async function restoreSession() {
   } catch { clearToken(); }
 }
 
+let providerCheckRunning = false;
 async function configureProviders() {
+  if (providerCheckRunning) return;
+  providerCheckRunning = true;
   try {
-    const response = await fetch('/api/auth/providers');
-    const payload = await response.json().catch(() => ({}));
-    googleEnabled = Boolean(payload.google);
-  } catch { googleEnabled = false; }
-  googleButton.disabled = !googleEnabled;
-  googleButton.setAttribute('aria-disabled', String(!googleEnabled));
-  googleNote.hidden = googleEnabled;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const response = await fetch('/api/auth/providers', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+        if (!response.ok) throw new Error('Provider check unavailable');
+        const payload = await response.json();
+        if (typeof payload.google !== 'boolean') throw new Error('Invalid provider response');
+        googleEnabled = payload.google;
+        googleButton.disabled = !googleEnabled;
+        googleButton.setAttribute('aria-disabled', String(!googleEnabled));
+        googleNote.textContent = loginStrings[loginLocale].googleUnavailable;
+        googleNote.hidden = googleEnabled;
+        return;
+      } catch {
+        if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+      }
+    }
+    // A starting/restarting API does not mean the Google keys are missing.
+    googleEnabled = false;
+    googleButton.disabled = true;
+    googleButton.setAttribute('aria-disabled', 'true');
+    googleNote.textContent = 'Cannot reach the sign-in service. Keep the local server running, then return to this tab to retry.';
+    googleNote.hidden = false;
+  } finally { providerCheckRunning = false; }
 }
+window.addEventListener('focus', () => { if (!googleEnabled) configureProviders(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !googleEnabled) configureProviders(); });
 
 async function signOut() {
   if (!await saveBeforeSignOut()) return;
